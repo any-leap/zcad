@@ -3,13 +3,12 @@
 
 use anyhow::Result;
 use eframe::egui;
-use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use zcad_core::entity::Entity;
 use zcad_core::geometry::{Circle, Geometry, Line, Polyline};
-use zcad_core::math::{Point2, Vector2};
+use zcad_core::math::Point2;
 use zcad_core::properties::Color;
 use zcad_file::Document;
 use zcad_ui::state::{DrawingTool, EditState, UiState};
@@ -23,10 +22,6 @@ struct ZcadApp {
     camera_center: Point2,
     camera_zoom: f64,
     viewport_size: (f32, f32),
-    
-    // 交互状态
-    is_panning: bool,
-    last_drag_pos: Option<egui::Pos2>,
 }
 
 impl Default for ZcadApp {
@@ -37,8 +32,6 @@ impl Default for ZcadApp {
             camera_center: Point2::new(250.0, 100.0),
             camera_zoom: 1.5,
             viewport_size: (800.0, 600.0),
-            is_panning: false,
-            last_drag_pos: None,
         };
         app.create_demo_content();
         app
@@ -424,6 +417,7 @@ impl eframe::App for ZcadApp {
             .collect();
 
         // ===== 顶部菜单 =====
+        #[allow(deprecated)]
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("文件", |ui| {
@@ -431,7 +425,7 @@ impl eframe::App for ZcadApp {
                         self.document = Document::new();
                         self.ui_state.clear_selection();
                         self.ui_state.status_message = "新文档".to_string();
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("🚪 退出").clicked() {
@@ -444,35 +438,35 @@ impl eframe::App for ZcadApp {
                             self.document.remove_entity(&id);
                         }
                         self.ui_state.clear_selection();
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 ui.menu_button("视图", |ui| {
                     if ui.button("📐 缩放至全部 (Z)").clicked() {
                         self.zoom_to_fit();
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button(format!("{} 网格 (G)", if grid { "☑" } else { "☐" })).clicked() {
                         self.ui_state.show_grid = !self.ui_state.show_grid;
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button(format!("{} 正交 (F8)", if ortho { "☑" } else { "☐" })).clicked() {
                         self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 ui.menu_button("绘图", |ui| {
                     if ui.button("╱ 直线 (L)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Line);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("○ 圆 (C)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Circle);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("▭ 矩形 (R)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Rectangle);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });

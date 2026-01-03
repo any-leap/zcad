@@ -15,8 +15,6 @@ nalgebra.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-egui.workspace = true
-egui-wgpu.workspace = true
 
 bytemuck = { version = "1.19", features = ["derive"] }
 
