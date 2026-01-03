@@ -1,0 +1,22 @@
+[package]
+name = "zcad-file"
+description = "ZCAD文件格式处理 - 原生格式和DXF互操作"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+zcad-core = { path = "../zcad-core" }
+
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+dxf.workspace = true
+
+flate2 = "1.0"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+

@@ -1,0 +1,15 @@
+[package]
+name = "zcad-core"
+description = "ZCAD核心几何引擎 - 提供2D/3D几何图元和操作"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+nalgebra.workspace = true
+parry2d.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+

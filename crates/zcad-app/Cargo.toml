@@ -1,0 +1,28 @@
+[package]
+name = "zcad-app"
+description = "ZCAD主应用程序"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zcad"
+path = "src/main.rs"
+
+[dependencies]
+zcad-core = { path = "../zcad-core" }
+zcad-renderer = { path = "../zcad-renderer" }
+zcad-file = { path = "../zcad-file" }
+zcad-ui = { path = "../zcad-ui" }
+
+wgpu.workspace = true
+egui.workspace = true
+eframe.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+
+pollster = "0.4"
+

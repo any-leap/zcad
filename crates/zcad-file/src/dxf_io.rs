@@ -1,0 +1,219 @@
+//! DXF文件导入/导出
+//!
+//! 支持AutoCAD DXF格式的读写。
+
+use crate::document::Document;
+use crate::error::FileError;
+use std::path::Path;
+use zcad_core::entity::Entity;
+use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline, PolylineVertex};
+use zcad_core::math::Point2;
+use zcad_core::properties::{Color, Properties};
+
+/// 从DXF文件导入
+pub fn import(path: &Path) -> Result<Document, FileError> {
+    let drawing = dxf::Drawing::load_file(path).map_err(|e| FileError::Dxf(e.to_string()))?;
+
+    let mut document = Document::new();
+
+    // 导入图层
+    for layer in drawing.layers() {
+        let color = aci_to_color(layer.color.index().unwrap_or(7) as u8);
+        let new_layer = zcad_core::layer::Layer::new(&layer.name).with_color(color);
+        document.layers.add_layer(new_layer);
+    }
+
+    // 导入实体
+    for entity in drawing.entities() {
+        if let Some(zcad_entity) = convert_dxf_entity(entity) {
+            document.add_entity(zcad_entity);
+        }
+    }
+
+    // 设置文件路径
+    document.set_file_path(path);
+
+    Ok(document)
+}
+
+/// 将DXF实体转换为ZCAD实体
+fn convert_dxf_entity(entity: &dxf::entities::Entity) -> Option<Entity> {
+    let geometry = match &entity.specific {
+        dxf::entities::EntityType::Line(line) => {
+            let start = Point2::new(line.p1.x, line.p1.y);
+            let end = Point2::new(line.p2.x, line.p2.y);
+            Geometry::Line(Line::new(start, end))
+        }
+
+        dxf::entities::EntityType::Circle(circle) => {
+            let center = Point2::new(circle.center.x, circle.center.y);
+            Geometry::Circle(Circle::new(center, circle.radius))
+        }
+
+        dxf::entities::EntityType::Arc(arc) => {
+            let center = Point2::new(arc.center.x, arc.center.y);
+            let start_angle = arc.start_angle.to_radians();
+            let end_angle = arc.end_angle.to_radians();
+            Geometry::Arc(Arc::new(center, arc.radius, start_angle, end_angle))
+        }
+
+        dxf::entities::EntityType::LwPolyline(lwpoly) => {
+            let vertices: Vec<PolylineVertex> = lwpoly
+                .vertices
+                .iter()
+                .map(|v| PolylineVertex::with_bulge(Point2::new(v.x, v.y), v.bulge))
+                .collect();
+
+            Geometry::Polyline(Polyline::new(vertices, lwpoly.is_closed()))
+        }
+
+        dxf::entities::EntityType::Polyline(poly) => {
+            let vertices: Vec<PolylineVertex> = poly
+                .vertices()
+                .map(|v| {
+                    PolylineVertex::with_bulge(Point2::new(v.location.x, v.location.y), v.bulge)
+                })
+                .collect();
+
+            Geometry::Polyline(Polyline::new(vertices, poly.is_closed()))
+        }
+
+        // TODO: 支持更多实体类型
+        _ => return None,
+    };
+
+    // 提取属性
+    let color = entity
+        .common
+        .color
+        .index()
+        .map(|i| aci_to_color(i as u8))
+        .unwrap_or(Color::BY_LAYER);
+
+    let properties = Properties::with_color(color);
+
+    Some(Entity::new(geometry).with_properties(properties))
+}
+
+/// 导出到DXF文件
+pub fn export(document: &Document, path: &Path) -> Result<(), FileError> {
+    let mut drawing = dxf::Drawing::new();
+
+    // 导出图层
+    for layer in document.layers.all_layers() {
+        let mut dxf_layer = dxf::tables::Layer::default();
+        dxf_layer.name = layer.name.clone();
+        dxf_layer.color = dxf::Color::from_index(color_to_aci(&layer.color));
+        drawing.add_layer(dxf_layer);
+    }
+
+    // 导出实体
+    for entity in document.all_entities() {
+        if let Some(dxf_entity) = convert_to_dxf_entity(entity) {
+            drawing.add_entity(dxf_entity);
+        }
+    }
+
+    drawing
+        .save_file(path)
+        .map_err(|e| FileError::Dxf(e.to_string()))?;
+
+    Ok(())
+}
+
+/// 将ZCAD实体转换为DXF实体
+fn convert_to_dxf_entity(entity: &Entity) -> Option<dxf::entities::Entity> {
+    let specific = match &entity.geometry {
+        Geometry::Line(line) => {
+            let mut dxf_line = dxf::entities::Line::default();
+            dxf_line.p1 = dxf::Point::new(line.start.x, line.start.y, 0.0);
+            dxf_line.p2 = dxf::Point::new(line.end.x, line.end.y, 0.0);
+            dxf::entities::EntityType::Line(dxf_line)
+        }
+
+        Geometry::Circle(circle) => {
+            let mut dxf_circle = dxf::entities::Circle::default();
+            dxf_circle.center = dxf::Point::new(circle.center.x, circle.center.y, 0.0);
+            dxf_circle.radius = circle.radius;
+            dxf::entities::EntityType::Circle(dxf_circle)
+        }
+
+        Geometry::Arc(arc) => {
+            let mut dxf_arc = dxf::entities::Arc::default();
+            dxf_arc.center = dxf::Point::new(arc.center.x, arc.center.y, 0.0);
+            dxf_arc.radius = arc.radius;
+            dxf_arc.start_angle = arc.start_angle.to_degrees();
+            dxf_arc.end_angle = arc.end_angle.to_degrees();
+            dxf::entities::EntityType::Arc(dxf_arc)
+        }
+
+        Geometry::Polyline(polyline) => {
+            let mut lwpoly = dxf::entities::LwPolyline::default();
+            lwpoly.set_is_closed(polyline.closed);
+            lwpoly.vertices = polyline
+                .vertices
+                .iter()
+                .map(|v| {
+                    let mut vertex = dxf::LwPolylineVertex::default();
+                    vertex.x = v.point.x;
+                    vertex.y = v.point.y;
+                    vertex.bulge = v.bulge;
+                    vertex
+                })
+                .collect();
+            dxf::entities::EntityType::LwPolyline(lwpoly)
+        }
+
+        Geometry::Point(point) => {
+            let mut dxf_point = dxf::entities::ModelPoint::default();
+            dxf_point.location = dxf::Point::new(point.position.x, point.position.y, 0.0);
+            dxf::entities::EntityType::ModelPoint(dxf_point)
+        }
+    };
+
+    let mut dxf_entity = dxf::entities::Entity::new(specific);
+
+    // 设置颜色
+    if !entity.properties.color.is_by_layer() {
+        dxf_entity.common.color =
+            dxf::Color::from_index(color_to_aci(&entity.properties.color));
+    }
+
+    Some(dxf_entity)
+}
+
+/// AutoCAD颜色索引(ACI)转ZCAD颜色
+fn aci_to_color(aci: u8) -> Color {
+    match aci {
+        1 => Color::RED,
+        2 => Color::YELLOW,
+        3 => Color::GREEN,
+        4 => Color::CYAN,
+        5 => Color::BLUE,
+        6 => Color::MAGENTA,
+        7 => Color::WHITE,
+        8 => Color::GRAY,
+        _ => Color::WHITE,
+    }
+}
+
+/// ZCAD颜色转AutoCAD颜色索引
+fn color_to_aci(color: &Color) -> u8 {
+    if color.is_by_layer() || color.is_by_block() {
+        return 7; // 默认白色（ByLayer/ByBlock在其他地方处理）
+    }
+
+    // 简单的颜色匹配
+    match (color.r, color.g, color.b) {
+        (255, 0, 0) => 1,
+        (255, 255, 0) => 2,
+        (0, 255, 0) => 3,
+        (0, 255, 255) => 4,
+        (0, 0, 255) => 5,
+        (255, 0, 255) => 6,
+        (255, 255, 255) => 7,
+        (128, 128, 128) => 8,
+        _ => 7, // 默认白色
+    }
+}
+

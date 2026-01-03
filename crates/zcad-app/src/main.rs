@@ -1,0 +1,711 @@
+//! ZCAD 主应用程序入口
+//! 使用 eframe 作为应用框架，提供完整的 egui + wgpu 集成
+
+use anyhow::Result;
+use eframe::egui;
+use std::sync::Arc;
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
+
+use zcad_core::entity::Entity;
+use zcad_core::geometry::{Circle, Geometry, Line, Polyline};
+use zcad_core::math::{Point2, Vector2};
+use zcad_core::properties::Color;
+use zcad_file::Document;
+use zcad_ui::state::{DrawingTool, EditState, UiState};
+
+/// ZCAD 应用程序
+struct ZcadApp {
+    document: Document,
+    ui_state: UiState,
+    
+    // 视图状态
+    camera_center: Point2,
+    camera_zoom: f64,
+    viewport_size: (f32, f32),
+    
+    // 交互状态
+    is_panning: bool,
+    last_drag_pos: Option<egui::Pos2>,
+}
+
+impl Default for ZcadApp {
+    fn default() -> Self {
+        let mut app = Self {
+            document: Document::new(),
+            ui_state: UiState::default(),
+            camera_center: Point2::new(250.0, 100.0),
+            camera_zoom: 1.5,
+            viewport_size: (800.0, 600.0),
+            is_panning: false,
+            last_drag_pos: None,
+        };
+        app.create_demo_content();
+        app
+    }
+}
+
+impl ZcadApp {
+    fn create_demo_content(&mut self) {
+        // 创建示例线条
+        for i in 0..10 {
+            let x = i as f64 * 50.0;
+            let line = Line::new(Point2::new(x, 0.0), Point2::new(x, 200.0));
+            let mut entity = Entity::new(Geometry::Line(line));
+            entity.properties.color = Color::CYAN;
+            self.document.add_entity(entity);
+        }
+
+        // 创建圆
+        let circle = Circle::new(Point2::new(250.0, 100.0), 80.0);
+        let mut entity = Entity::new(Geometry::Circle(circle));
+        entity.properties.color = Color::YELLOW;
+        self.document.add_entity(entity);
+
+        // 创建矩形
+        let rect = Polyline::from_points(
+            [
+                Point2::new(400.0, 50.0),
+                Point2::new(550.0, 50.0),
+                Point2::new(550.0, 150.0),
+                Point2::new(400.0, 150.0),
+            ],
+            true,
+        );
+        let mut entity = Entity::new(Geometry::Polyline(rect));
+        entity.properties.color = Color::GREEN;
+        self.document.add_entity(entity);
+
+        info!("Created {} demo entities", self.document.entity_count());
+    }
+
+    /// 世界坐标转屏幕坐标
+    fn world_to_screen(&self, point: Point2, rect: &egui::Rect) -> egui::Pos2 {
+        let center = rect.center();
+        let x = center.x + ((point.x - self.camera_center.x) * self.camera_zoom) as f32;
+        let y = center.y - ((point.y - self.camera_center.y) * self.camera_zoom) as f32; // Y轴翻转
+        egui::Pos2::new(x, y)
+    }
+
+    /// 屏幕坐标转世界坐标
+    fn screen_to_world(&self, pos: egui::Pos2, rect: &egui::Rect) -> Point2 {
+        let center = rect.center();
+        let x = self.camera_center.x + ((pos.x - center.x) as f64 / self.camera_zoom);
+        let y = self.camera_center.y - ((pos.y - center.y) as f64 / self.camera_zoom); // Y轴翻转
+        Point2::new(x, y)
+    }
+
+    /// 绘制网格
+    fn draw_grid(&self, painter: &egui::Painter, rect: &egui::Rect) {
+        if !self.ui_state.show_grid {
+            return;
+        }
+
+        // 根据缩放级别调整网格间距
+        let mut spacing = 50.0;
+        while spacing * self.camera_zoom < 20.0 {
+            spacing *= 5.0;
+        }
+        while spacing * self.camera_zoom > 200.0 {
+            spacing /= 5.0;
+        }
+
+        // 计算可见范围
+        let top_left = self.screen_to_world(rect.left_top(), rect);
+        let bottom_right = self.screen_to_world(rect.right_bottom(), rect);
+
+        let start_x = (top_left.x / spacing).floor() * spacing;
+        let end_x = (bottom_right.x / spacing).ceil() * spacing;
+        let start_y = (bottom_right.y / spacing).floor() * spacing;
+        let end_y = (top_left.y / spacing).ceil() * spacing;
+
+        let grid_color = egui::Color32::from_rgb(50, 50, 60);
+        let axis_color = egui::Color32::from_rgb(80, 80, 100);
+
+        // 绘制垂直线
+        let mut x = start_x;
+        while x <= end_x {
+            let screen_x = self.world_to_screen(Point2::new(x, 0.0), rect).x;
+            if screen_x >= rect.left() && screen_x <= rect.right() {
+                let color = if x.abs() < 0.001 { axis_color } else { grid_color };
+                painter.line_segment(
+                    [egui::Pos2::new(screen_x, rect.top()), egui::Pos2::new(screen_x, rect.bottom())],
+                    egui::Stroke::new(1.0, color),
+                );
+            }
+            x += spacing;
+        }
+
+        // 绘制水平线
+        let mut y = start_y;
+        while y <= end_y {
+            let screen_y = self.world_to_screen(Point2::new(0.0, y), rect).y;
+            if screen_y >= rect.top() && screen_y <= rect.bottom() {
+                let color = if y.abs() < 0.001 { axis_color } else { grid_color };
+                painter.line_segment(
+                    [egui::Pos2::new(rect.left(), screen_y), egui::Pos2::new(rect.right(), screen_y)],
+                    egui::Stroke::new(1.0, color),
+                );
+            }
+            y += spacing;
+        }
+    }
+
+    /// 绘制几何体
+    fn draw_geometry(&self, painter: &egui::Painter, rect: &egui::Rect, geometry: &Geometry, color: Color) {
+        let stroke_color = egui::Color32::from_rgb(color.r, color.g, color.b);
+        let stroke = egui::Stroke::new(1.5, stroke_color);
+
+        match geometry {
+            Geometry::Point(p) => {
+                let screen = self.world_to_screen(p.position, rect);
+                painter.circle_filled(screen, 3.0, stroke_color);
+            }
+            Geometry::Line(line) => {
+                let start = self.world_to_screen(line.start, rect);
+                let end = self.world_to_screen(line.end, rect);
+                painter.line_segment([start, end], stroke);
+            }
+            Geometry::Circle(circle) => {
+                let center = self.world_to_screen(circle.center, rect);
+                let radius = (circle.radius * self.camera_zoom) as f32;
+                painter.circle_stroke(center, radius, stroke);
+            }
+            Geometry::Arc(arc) => {
+                // 简化：用线段近似弧线
+                let segments = 32;
+                let sweep = arc.sweep_angle();
+                let angle_step = sweep / segments as f64;
+                
+                for i in 0..segments {
+                    let a1 = arc.start_angle + i as f64 * angle_step;
+                    let a2 = arc.start_angle + (i + 1) as f64 * angle_step;
+                    
+                    let p1 = Point2::new(
+                        arc.center.x + arc.radius * a1.cos(),
+                        arc.center.y + arc.radius * a1.sin(),
+                    );
+                    let p2 = Point2::new(
+                        arc.center.x + arc.radius * a2.cos(),
+                        arc.center.y + arc.radius * a2.sin(),
+                    );
+                    
+                    let s1 = self.world_to_screen(p1, rect);
+                    let s2 = self.world_to_screen(p2, rect);
+                    painter.line_segment([s1, s2], stroke);
+                }
+            }
+            Geometry::Polyline(polyline) => {
+                if polyline.vertices.len() < 2 {
+                    return;
+                }
+                
+                for i in 0..polyline.segment_count() {
+                    let v1 = &polyline.vertices[i];
+                    let v2 = &polyline.vertices[(i + 1) % polyline.vertices.len()];
+                    
+                    let s1 = self.world_to_screen(v1.point, rect);
+                    let s2 = self.world_to_screen(v2.point, rect);
+                    painter.line_segment([s1, s2], stroke);
+                }
+            }
+        }
+    }
+
+    /// 绘制十字光标
+    fn draw_crosshair(&self, painter: &egui::Painter, rect: &egui::Rect, world_pos: Point2) {
+        let screen = self.world_to_screen(world_pos, rect);
+        let size = 15.0;
+        let color = egui::Color32::WHITE;
+        let stroke = egui::Stroke::new(1.0, color);
+
+        painter.line_segment(
+            [egui::Pos2::new(screen.x - size, screen.y), egui::Pos2::new(screen.x + size, screen.y)],
+            stroke,
+        );
+        painter.line_segment(
+            [egui::Pos2::new(screen.x, screen.y - size), egui::Pos2::new(screen.x, screen.y + size)],
+            stroke,
+        );
+    }
+
+    /// 绘制预览
+    fn draw_preview(&self, painter: &egui::Painter, rect: &egui::Rect) {
+        if let EditState::Drawing { tool, points } = &self.ui_state.edit_state {
+            if points.is_empty() {
+                return;
+            }
+            
+            let preview_color = Color::from_hex(0xFF00FF);
+            let mouse_pos = self.ui_state.mouse_world_pos;
+
+            match tool {
+                DrawingTool::Line => {
+                    let line = Line::new(points[0], mouse_pos);
+                    self.draw_geometry(painter, rect, &Geometry::Line(line), preview_color);
+                }
+                DrawingTool::Circle => {
+                    let radius = (mouse_pos - points[0]).norm();
+                    if radius > 0.01 {
+                        let circle = Circle::new(points[0], radius);
+                        self.draw_geometry(painter, rect, &Geometry::Circle(circle), preview_color);
+                    }
+                }
+                DrawingTool::Rectangle => {
+                    let p1 = points[0];
+                    let rect_geom = Polyline::from_points(
+                        [
+                            Point2::new(p1.x, p1.y),
+                            Point2::new(mouse_pos.x, p1.y),
+                            Point2::new(mouse_pos.x, mouse_pos.y),
+                            Point2::new(p1.x, mouse_pos.y),
+                        ],
+                        true,
+                    );
+                    self.draw_geometry(painter, rect, &Geometry::Polyline(rect_geom), preview_color);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// 处理左键点击
+    fn handle_left_click(&mut self) {
+        let world_pos = self.ui_state.mouse_world_pos;
+
+        match &self.ui_state.edit_state {
+            EditState::Idle => match self.ui_state.current_tool {
+                DrawingTool::Line => {
+                    self.ui_state.edit_state = EditState::Drawing {
+                        tool: DrawingTool::Line,
+                        points: vec![world_pos],
+                    };
+                    self.ui_state.status_message = "指定下一点:".to_string();
+                }
+                DrawingTool::Circle => {
+                    self.ui_state.edit_state = EditState::Drawing {
+                        tool: DrawingTool::Circle,
+                        points: vec![world_pos],
+                    };
+                    self.ui_state.status_message = "指定半径:".to_string();
+                }
+                DrawingTool::Rectangle => {
+                    self.ui_state.edit_state = EditState::Drawing {
+                        tool: DrawingTool::Rectangle,
+                        points: vec![world_pos],
+                    };
+                    self.ui_state.status_message = "指定对角点:".to_string();
+                }
+                DrawingTool::Select => {
+                    let hits = self.document.query_point(&world_pos, 5.0 / self.camera_zoom);
+                    self.ui_state.clear_selection();
+                    if let Some(entity) = hits.first() {
+                        self.ui_state.add_to_selection(entity.id);
+                        self.ui_state.status_message = format!("已选择: {}", entity.geometry.type_name());
+                    } else {
+                        self.ui_state.status_message.clear();
+                    }
+                }
+                _ => {}
+            },
+            EditState::Drawing { tool, points } => {
+                let mut new_points = points.clone();
+                new_points.push(world_pos);
+
+                match tool {
+                    DrawingTool::Line => {
+                        if new_points.len() >= 2 {
+                            let line = Line::new(new_points[0], new_points[1]);
+                            let entity = Entity::new(Geometry::Line(line));
+                            self.document.add_entity(entity);
+                            self.ui_state.edit_state = EditState::Drawing {
+                                tool: DrawingTool::Line,
+                                points: vec![new_points[1]],
+                            };
+                            self.ui_state.status_message = "直线已创建。下一点:".to_string();
+                        }
+                    }
+                    DrawingTool::Circle => {
+                        if new_points.len() >= 2 {
+                            let radius = (new_points[1] - new_points[0]).norm();
+                            let circle = Circle::new(new_points[0], radius);
+                            let entity = Entity::new(Geometry::Circle(circle));
+                            self.document.add_entity(entity);
+                            self.ui_state.edit_state = EditState::Idle;
+                            self.ui_state.status_message = "圆已创建".to_string();
+                        }
+                    }
+                    DrawingTool::Rectangle => {
+                        if new_points.len() >= 2 {
+                            let p1 = new_points[0];
+                            let p2 = new_points[1];
+                            let rect = Polyline::from_points(
+                                [
+                                    Point2::new(p1.x, p1.y),
+                                    Point2::new(p2.x, p1.y),
+                                    Point2::new(p2.x, p2.y),
+                                    Point2::new(p1.x, p2.y),
+                                ],
+                                true,
+                            );
+                            let entity = Entity::new(Geometry::Polyline(rect));
+                            self.document.add_entity(entity);
+                            self.ui_state.edit_state = EditState::Idle;
+                            self.ui_state.status_message = "矩形已创建".to_string();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 缩放到适合视图
+    fn zoom_to_fit(&mut self) {
+        if let Some(bounds) = self.document.bounds() {
+            self.camera_center = Point2::new(
+                (bounds.min.x + bounds.max.x) / 2.0,
+                (bounds.min.y + bounds.max.y) / 2.0,
+            );
+            
+            let width = bounds.max.x - bounds.min.x;
+            let height = bounds.max.y - bounds.min.y;
+            
+            let zoom_x = (self.viewport_size.0 as f64 - 100.0) / width.max(1.0);
+            let zoom_y = (self.viewport_size.1 as f64 - 100.0) / height.max(1.0);
+            
+            self.camera_zoom = zoom_x.min(zoom_y).clamp(0.01, 100.0);
+        }
+    }
+}
+
+impl eframe::App for ZcadApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 深色主题
+        ctx.set_visuals(egui::Visuals::dark());
+
+        // UI状态快照
+        let current_tool = self.ui_state.current_tool;
+        let ortho = self.ui_state.ortho_mode;
+        let grid = self.ui_state.show_grid;
+        let status = self.ui_state.status_message.clone();
+        let mouse_world = self.ui_state.mouse_world_pos;
+        let entity_count = self.document.entity_count();
+        let selected_count = self.ui_state.selected_entities.len();
+
+        // 选中实体信息
+        let selected_info: Option<(String, Vec<String>)> = if selected_count == 1 {
+            self.document.get_entity(&self.ui_state.selected_entities[0]).map(|e| {
+                let name = e.geometry.type_name().to_string();
+                let props: Vec<String> = match &e.geometry {
+                    Geometry::Line(l) => vec![
+                        format!("起点: ({:.2}, {:.2})", l.start.x, l.start.y),
+                        format!("终点: ({:.2}, {:.2})", l.end.x, l.end.y),
+                        format!("长度: {:.3}", l.length()),
+                    ],
+                    Geometry::Circle(c) => vec![
+                        format!("圆心: ({:.2}, {:.2})", c.center.x, c.center.y),
+                        format!("半径: {:.3}", c.radius),
+                    ],
+                    Geometry::Polyline(p) => vec![
+                        format!("顶点数: {}", p.vertex_count()),
+                        format!("长度: {:.3}", p.length()),
+                    ],
+                    _ => vec![],
+                };
+                (name, props)
+            })
+        } else { None };
+
+        // 图层信息
+        let layers_info: Vec<_> = self.document.layers.all_layers().iter()
+            .map(|l| (l.name.clone(), l.color.r, l.color.g, l.color.b, l.name == self.document.layers.current_layer().name))
+            .collect();
+
+        // ===== 顶部菜单 =====
+        egui::TopBottomPanel::top("menu").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("文件", |ui| {
+                    if ui.button("📄 新建 (N)").clicked() {
+                        self.document = Document::new();
+                        self.ui_state.clear_selection();
+                        self.ui_state.status_message = "新文档".to_string();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("🚪 退出").clicked() {
+                        std::process::exit(0);
+                    }
+                });
+                ui.menu_button("编辑", |ui| {
+                    if ui.button("🗑 删除 (Del)").clicked() {
+                        for id in self.ui_state.selected_entities.clone() {
+                            self.document.remove_entity(&id);
+                        }
+                        self.ui_state.clear_selection();
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("视图", |ui| {
+                    if ui.button("📐 缩放至全部 (Z)").clicked() {
+                        self.zoom_to_fit();
+                        ui.close_menu();
+                    }
+                    if ui.button(format!("{} 网格 (G)", if grid { "☑" } else { "☐" })).clicked() {
+                        self.ui_state.show_grid = !self.ui_state.show_grid;
+                        ui.close_menu();
+                    }
+                    if ui.button(format!("{} 正交 (F8)", if ortho { "☑" } else { "☐" })).clicked() {
+                        self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
+                        ui.close_menu();
+                    }
+                });
+                ui.menu_button("绘图", |ui| {
+                    if ui.button("╱ 直线 (L)").clicked() {
+                        self.ui_state.set_tool(DrawingTool::Line);
+                        ui.close_menu();
+                    }
+                    if ui.button("○ 圆 (C)").clicked() {
+                        self.ui_state.set_tool(DrawingTool::Circle);
+                        ui.close_menu();
+                    }
+                    if ui.button("▭ 矩形 (R)").clicked() {
+                        self.ui_state.set_tool(DrawingTool::Rectangle);
+                        ui.close_menu();
+                    }
+                });
+            });
+        });
+
+        // ===== 工具栏 =====
+        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.selectable_label(current_tool == DrawingTool::Select, "⬚ 选择").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Select);
+                }
+                ui.separator();
+                if ui.selectable_label(current_tool == DrawingTool::Line, "╱ 直线").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Line);
+                }
+                if ui.selectable_label(current_tool == DrawingTool::Circle, "○ 圆").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Circle);
+                }
+                if ui.selectable_label(current_tool == DrawingTool::Rectangle, "▭ 矩形").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Rectangle);
+                }
+                if ui.selectable_label(current_tool == DrawingTool::Arc, "◠ 圆弧").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Arc);
+                }
+                if ui.selectable_label(current_tool == DrawingTool::Polyline, "⌇ 多段线").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Polyline);
+                }
+                ui.separator();
+                if ui.button("🗑").on_hover_text("删除选中").clicked() {
+                    for id in self.ui_state.selected_entities.clone() {
+                        self.document.remove_entity(&id);
+                    }
+                    self.ui_state.clear_selection();
+                }
+                ui.separator();
+                if ui.selectable_label(ortho, "⊥").on_hover_text("正交模式 (F8)").clicked() {
+                    self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
+                }
+                if ui.selectable_label(grid, "#").on_hover_text("网格 (G)").clicked() {
+                    self.ui_state.show_grid = !self.ui_state.show_grid;
+                }
+                if ui.button("⊞").on_hover_text("缩放至全部 (Z)").clicked() {
+                    self.zoom_to_fit();
+                }
+            });
+        });
+
+        // ===== 状态栏 =====
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(&status);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("X:{:>8.2} Y:{:>8.2}", mouse_world.x, mouse_world.y));
+                    ui.separator();
+                    ui.label(format!("实体: {}", entity_count));
+                    if selected_count > 0 {
+                        ui.separator();
+                        ui.label(format!("选中: {}", selected_count));
+                    }
+                });
+            });
+        });
+
+        // ===== 右侧面板 - 图层 =====
+        egui::SidePanel::right("layers").default_width(150.0).show(ctx, |ui| {
+            ui.heading("图层");
+            ui.separator();
+            for (name, r, g, b, is_current) in &layers_info {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 1.0, egui::Color32::from_rgb(*r, *g, *b));
+                    let txt = if *is_current { egui::RichText::new(name).strong() } else { egui::RichText::new(name) };
+                    ui.label(txt);
+                });
+            }
+        });
+
+        // ===== 左侧面板 - 属性 =====
+        egui::SidePanel::left("props").default_width(170.0).show(ctx, |ui| {
+            ui.heading("属性");
+            ui.separator();
+            if let Some((type_name, props)) = &selected_info {
+                ui.label(format!("类型: {}", type_name));
+                ui.separator();
+                for p in props { ui.label(p); }
+            } else if selected_count > 1 {
+                ui.label(format!("{} 个对象", selected_count));
+            } else {
+                ui.label(format!("工具: {}", current_tool.name()));
+            }
+            ui.separator();
+            ui.label(format!("X: {:.4}", mouse_world.x));
+            ui.label(format!("Y: {:.4}", mouse_world.y));
+        });
+
+        // ===== 中央绘图区域 =====
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(30, 30, 46)))
+            .show(ctx, |ui| {
+                let available_rect = ui.available_rect_before_wrap();
+                self.viewport_size = (available_rect.width(), available_rect.height());
+                
+                let (response, painter) = ui.allocate_painter(available_rect.size(), egui::Sense::click_and_drag());
+                let rect = response.rect;
+
+                // 处理鼠标位置
+                if let Some(hover_pos) = response.hover_pos() {
+                    self.ui_state.mouse_world_pos = self.screen_to_world(hover_pos, &rect);
+                }
+
+                // 处理滚轮缩放
+                let scroll_delta = ui.input(|i| i.raw_scroll_delta);
+                if scroll_delta.y.abs() > 0.0 && response.hovered() {
+                    let zoom_factor = if scroll_delta.y > 0.0 { 1.1 } else { 0.9 };
+                    
+                    // 缩放时保持鼠标位置不变
+                    if let Some(hover_pos) = response.hover_pos() {
+                        let world_before = self.screen_to_world(hover_pos, &rect);
+                        self.camera_zoom *= zoom_factor;
+                        self.camera_zoom = self.camera_zoom.clamp(0.01, 100.0);
+                        let world_after = self.screen_to_world(hover_pos, &rect);
+                        self.camera_center.x += world_before.x - world_after.x;
+                        self.camera_center.y += world_before.y - world_after.y;
+                    }
+                }
+
+                // 处理中键平移
+                if response.dragged_by(egui::PointerButton::Middle) {
+                    let delta = response.drag_delta();
+                    self.camera_center.x -= (delta.x as f64) / self.camera_zoom;
+                    self.camera_center.y += (delta.y as f64) / self.camera_zoom;
+                }
+
+                // 处理左键点击
+                if response.clicked_by(egui::PointerButton::Primary) {
+                    self.handle_left_click();
+                }
+
+                // 处理右键取消
+                if response.clicked_by(egui::PointerButton::Secondary) {
+                    self.ui_state.cancel();
+                }
+
+                // 处理键盘快捷键
+                ui.input(|i| {
+                    if i.key_pressed(egui::Key::Escape) {
+                        self.ui_state.cancel();
+                    }
+                    if i.key_pressed(egui::Key::L) {
+                        self.ui_state.set_tool(DrawingTool::Line);
+                    }
+                    if i.key_pressed(egui::Key::C) {
+                        self.ui_state.set_tool(DrawingTool::Circle);
+                    }
+                    if i.key_pressed(egui::Key::R) {
+                        self.ui_state.set_tool(DrawingTool::Rectangle);
+                    }
+                    if i.key_pressed(egui::Key::Space) {
+                        self.ui_state.set_tool(DrawingTool::Select);
+                    }
+                    if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                        for id in self.ui_state.selected_entities.clone() {
+                            self.document.remove_entity(&id);
+                        }
+                        self.ui_state.clear_selection();
+                    }
+                    if i.key_pressed(egui::Key::Z) {
+                        self.zoom_to_fit();
+                    }
+                    if i.key_pressed(egui::Key::G) {
+                        self.ui_state.show_grid = !self.ui_state.show_grid;
+                    }
+                    if i.key_pressed(egui::Key::F8) {
+                        self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
+                    }
+                    if i.key_pressed(egui::Key::N) {
+                        self.document = Document::new();
+                        self.ui_state.clear_selection();
+                        self.ui_state.status_message = "新文档".to_string();
+                    }
+                });
+
+                // ===== 绘制 =====
+                // 绘制网格
+                self.draw_grid(&painter, &rect);
+
+                // 绘制所有实体
+                for entity in self.document.all_entities() {
+                    let color = if self.ui_state.selected_entities.contains(&entity.id) {
+                        Color::from_hex(0x00FF00)
+                    } else if entity.properties.color.is_by_layer() {
+                        self.document.layers.get_layer_by_id(entity.layer_id)
+                            .map(|l| l.color).unwrap_or(Color::WHITE)
+                    } else {
+                        entity.properties.color
+                    };
+                    self.draw_geometry(&painter, &rect, &entity.geometry, color);
+                }
+
+                // 绘制预览
+                self.draw_preview(&painter, &rect);
+
+                // 绘制十字光标
+                if response.hovered() {
+                    self.draw_crosshair(&painter, &rect, self.ui_state.mouse_world_pos);
+                }
+            });
+
+        // 请求持续重绘（实现动画效果）
+        ctx.request_repaint();
+    }
+}
+
+fn main() -> Result<()> {
+    // 初始化日志
+    tracing::subscriber::set_global_default(
+        FmtSubscriber::builder().with_max_level(Level::INFO).finish()
+    )?;
+    
+    info!("Starting ZCAD...");
+
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1400.0, 900.0])
+            .with_title("ZCAD"),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        "ZCAD",
+        native_options,
+        Box::new(|_cc| Ok(Box::new(ZcadApp::default()))),
+    ).map_err(|e| anyhow::anyhow!("eframe error: {}", e))?;
+
+    Ok(())
+}

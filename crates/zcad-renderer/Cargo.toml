@@ -1,0 +1,22 @@
+[package]
+name = "zcad-renderer"
+description = "ZCAD GPU渲染器 - 基于wgpu的高性能渲染"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+zcad-core = { path = "../zcad-core" }
+
+wgpu.workspace = true
+winit.workspace = true
+nalgebra.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+
+bytemuck = { version = "1.19", features = ["derive"] }
+

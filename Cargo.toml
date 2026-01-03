@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zcad-core",      # 核心几何引擎
+    "crates/zcad-renderer",  # GPU渲染器
+    "crates/zcad-file",      # 文件格式处理
+    "crates/zcad-ui",        # 用户界面
+    "crates/zcad-app",       # 主应用程序
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ZCAD Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zcad/zcad"
+rust-version = "1.83"
+
+[workspace.dependencies]
+# 几何与数学
+nalgebra = { version = "0.33", features = ["serde-serialize"] }
+parry2d = { version = "0.17", features = ["serde-serialize"] }
+parry3d = { version = "0.17", features = ["serde-serialize"] }
+
+# 渲染
+wgpu = "27"
+winit = "0.30"
+egui = "0.33"
+egui-wgpu = "0.33"
+egui-winit = "0.33"
+eframe = { version = "0.33", default-features = false, features = ["wgpu", "default_fonts"] }
+
+# 数据序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+flatbuffers = "24"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# 异步与并发
+tokio = { version = "1.42", features = ["full"] }
+rayon = "1.10"
+crossbeam = "0.8"
+
+# 工具
+thiserror = "2"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# DXF互操作
+dxf = "0.6"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+

@@ -1,0 +1,15 @@
+[package]
+name = "zcad-ui"
+description = "ZCAD用户界面 - 基于egui的现代CAD界面"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+zcad-core = { path = "../zcad-core" }
+zcad-file = { path = "../zcad-file" }
+
+egui.workspace = true
+tracing.workspace = true
+

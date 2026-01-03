@@ -1,0 +1,273 @@
+//! UI状态管理
+
+use zcad_core::entity::EntityId;
+use zcad_core::math::Point2;
+
+/// 当前绘图工具
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawingTool {
+    None,
+    Select,
+    Line,
+    Circle,
+    Arc,
+    Polyline,
+    Rectangle,
+    Point,
+}
+
+impl DrawingTool {
+    pub fn name(&self) -> &'static str {
+        match self {
+            DrawingTool::None => "None",
+            DrawingTool::Select => "Select",
+            DrawingTool::Line => "Line",
+            DrawingTool::Circle => "Circle",
+            DrawingTool::Arc => "Arc",
+            DrawingTool::Polyline => "Polyline",
+            DrawingTool::Rectangle => "Rectangle",
+            DrawingTool::Point => "Point",
+        }
+    }
+
+    pub fn shortcut(&self) -> Option<&'static str> {
+        match self {
+            DrawingTool::Select => Some("Space"),
+            DrawingTool::Line => Some("L"),
+            DrawingTool::Circle => Some("C"),
+            DrawingTool::Arc => Some("A"),
+            DrawingTool::Polyline => Some("P"),
+            DrawingTool::Rectangle => Some("R"),
+            DrawingTool::Point => Some("."),
+            DrawingTool::None => None,
+        }
+    }
+}
+
+/// 捕捉模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapMode {
+    pub endpoint: bool,
+    pub midpoint: bool,
+    pub center: bool,
+    pub intersection: bool,
+    pub perpendicular: bool,
+    pub tangent: bool,
+    pub nearest: bool,
+    pub grid: bool,
+}
+
+impl Default for SnapMode {
+    fn default() -> Self {
+        Self {
+            endpoint: true,
+            midpoint: true,
+            center: true,
+            intersection: true,
+            perpendicular: false,
+            tangent: false,
+            nearest: false,
+            grid: false,
+        }
+    }
+}
+
+/// 编辑状态
+#[derive(Debug, Clone)]
+pub enum EditState {
+    /// 空闲
+    Idle,
+    /// 正在绘制
+    Drawing {
+        tool: DrawingTool,
+        points: Vec<Point2>,
+    },
+    /// 选择中
+    Selecting {
+        start: Point2,
+    },
+    /// 移动选择的对象
+    Moving {
+        start: Point2,
+        offset: Point2,
+    },
+    /// 等待命令输入
+    Command {
+        input: String,
+    },
+}
+
+impl Default for EditState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+/// UI状态
+#[derive(Debug)]
+pub struct UiState {
+    /// 当前工具
+    pub current_tool: DrawingTool,
+
+    /// 编辑状态
+    pub edit_state: EditState,
+
+    /// 选中的实体
+    pub selected_entities: Vec<EntityId>,
+
+    /// 鼠标在世界坐标中的位置
+    pub mouse_world_pos: Point2,
+
+    /// 捕捉到的点（如果有）
+    pub snap_point: Option<Point2>,
+
+    /// 捕捉模式
+    pub snap_mode: SnapMode,
+
+    /// 是否显示网格
+    pub show_grid: bool,
+
+    /// 网格间距
+    pub grid_spacing: f64,
+
+    /// 命令行输入
+    pub command_input: String,
+
+    /// 命令历史
+    pub command_history: Vec<String>,
+
+    /// 状态栏消息
+    pub status_message: String,
+
+    /// 是否显示图层面板
+    pub show_layers_panel: bool,
+
+    /// 是否显示属性面板
+    pub show_properties_panel: bool,
+
+    /// 正交模式
+    pub ortho_mode: bool,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            current_tool: DrawingTool::Select,
+            edit_state: EditState::Idle,
+            selected_entities: Vec::new(),
+            mouse_world_pos: Point2::origin(),
+            snap_point: None,
+            snap_mode: SnapMode::default(),
+            show_grid: true,
+            grid_spacing: 10.0,
+            command_input: String::new(),
+            command_history: Vec::new(),
+            status_message: "Ready".to_string(),
+            show_layers_panel: true,
+            show_properties_panel: true,
+            ortho_mode: false,
+        }
+    }
+}
+
+impl UiState {
+    /// 设置当前工具
+    pub fn set_tool(&mut self, tool: DrawingTool) {
+        self.current_tool = tool;
+        self.edit_state = EditState::Idle;
+        self.status_message = format!("{} tool selected", tool.name());
+    }
+
+    /// 取消当前操作
+    pub fn cancel(&mut self) {
+        self.edit_state = EditState::Idle;
+        self.status_message = "Cancelled".to_string();
+    }
+
+    /// 清空选择
+    pub fn clear_selection(&mut self) {
+        self.selected_entities.clear();
+    }
+
+    /// 添加到选择
+    pub fn add_to_selection(&mut self, id: EntityId) {
+        if !self.selected_entities.contains(&id) {
+            self.selected_entities.push(id);
+        }
+    }
+
+    /// 从选择中移除
+    pub fn remove_from_selection(&mut self, id: &EntityId) {
+        self.selected_entities.retain(|e| e != id);
+    }
+
+    /// 切换选择状态
+    pub fn toggle_selection(&mut self, id: EntityId) {
+        if self.selected_entities.contains(&id) {
+            self.remove_from_selection(&id);
+        } else {
+            self.add_to_selection(id);
+        }
+    }
+
+    /// 执行命令
+    pub fn execute_command(&mut self, command: &str) -> Option<Command> {
+        let trimmed = command.trim().to_uppercase();
+
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        // 添加到历史
+        self.command_history.push(command.to_string());
+
+        // 解析命令
+        let cmd = match trimmed.as_str() {
+            "L" | "LINE" => Some(Command::SetTool(DrawingTool::Line)),
+            "C" | "CIRCLE" => Some(Command::SetTool(DrawingTool::Circle)),
+            "A" | "ARC" => Some(Command::SetTool(DrawingTool::Arc)),
+            "P" | "PL" | "PLINE" | "POLYLINE" => Some(Command::SetTool(DrawingTool::Polyline)),
+            "R" | "REC" | "RECTANGLE" => Some(Command::SetTool(DrawingTool::Rectangle)),
+            "E" | "ERASE" | "DELETE" => Some(Command::DeleteSelected),
+            "M" | "MOVE" => Some(Command::Move),
+            "CO" | "COPY" => Some(Command::Copy),
+            "RO" | "ROTATE" => Some(Command::Rotate),
+            "SC" | "SCALE" => Some(Command::Scale),
+            "MI" | "MIRROR" => Some(Command::Mirror),
+            "Z" | "ZOOM" => Some(Command::ZoomExtents),
+            "ZE" | "ZOOM EXTENTS" => Some(Command::ZoomExtents),
+            "U" | "UNDO" => Some(Command::Undo),
+            "REDO" => Some(Command::Redo),
+            "ESC" => {
+                self.cancel();
+                None
+            }
+            _ => {
+                self.status_message = format!("Unknown command: {}", command);
+                None
+            }
+        };
+
+        if let Some(ref c) = cmd {
+            self.status_message = format!("Command: {:?}", c);
+        }
+
+        cmd
+    }
+}
+
+/// 命令类型
+#[derive(Debug, Clone)]
+pub enum Command {
+    SetTool(DrawingTool),
+    DeleteSelected,
+    Move,
+    Copy,
+    Rotate,
+    Scale,
+    Mirror,
+    ZoomExtents,
+    Undo,
+    Redo,
+}
+
