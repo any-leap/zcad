@@ -7,9 +7,10 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Circle, Geometry, Line, Polyline};
+use zcad_core::geometry::{Arc, Circle, Geometry, Line, Point, Polyline};
 use zcad_core::math::Point2;
 use zcad_core::properties::Color;
+use zcad_core::snap::SnapType;
 use zcad_file::Document;
 use zcad_ui::state::{DrawingTool, EditState, UiState};
 
@@ -22,6 +23,16 @@ struct ZcadApp {
     camera_center: Point2,
     camera_zoom: f64,
     viewport_size: (f32, f32),
+    
+    // 文件操作状态
+    pending_file_op: Option<FileOperation>,
+}
+
+/// 文件操作类型
+#[derive(Debug, Clone)]
+enum FileOperation {
+    Open(std::path::PathBuf),
+    Save(std::path::PathBuf),
 }
 
 impl Default for ZcadApp {
@@ -32,6 +43,7 @@ impl Default for ZcadApp {
             camera_center: Point2::new(250.0, 100.0),
             camera_zoom: 1.5,
             viewport_size: (800.0, 600.0),
+            pending_file_op: None,
         };
         app.create_demo_content();
         app
@@ -222,6 +234,186 @@ impl ZcadApp {
         );
     }
 
+    /// 绘制捕捉标记
+    fn draw_snap_marker(&self, painter: &egui::Painter, rect: &egui::Rect, snap_type: SnapType, world_pos: Point2) {
+        let screen = self.world_to_screen(world_pos, rect);
+        let size = 8.0;
+        let stroke = egui::Stroke::new(2.0, egui::Color32::YELLOW);
+
+        match snap_type {
+            SnapType::Endpoint => {
+                // 方形标记
+                painter.rect_stroke(
+                    egui::Rect::from_center_size(screen, egui::vec2(size * 2.0, size * 2.0)),
+                    egui::CornerRadius::ZERO,
+                    stroke,
+                    egui::StrokeKind::Outside,
+                );
+            }
+            SnapType::Midpoint => {
+                // 三角形标记
+                let points = [
+                    egui::Pos2::new(screen.x, screen.y - size),
+                    egui::Pos2::new(screen.x - size, screen.y + size),
+                    egui::Pos2::new(screen.x + size, screen.y + size),
+                ];
+                painter.add(egui::Shape::closed_line(points.to_vec(), stroke));
+            }
+            SnapType::Center => {
+                // 圆形标记
+                painter.circle_stroke(screen, size, stroke);
+            }
+            SnapType::Intersection => {
+                // X形标记
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - size, screen.y - size), egui::Pos2::new(screen.x + size, screen.y + size)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - size, screen.y + size), egui::Pos2::new(screen.x + size, screen.y - size)],
+                    stroke,
+                );
+            }
+            SnapType::Perpendicular => {
+                // 垂直标记（直角符号）
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - size, screen.y), egui::Pos2::new(screen.x, screen.y)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x, screen.y), egui::Pos2::new(screen.x, screen.y + size)],
+                    stroke,
+                );
+            }
+            SnapType::Tangent => {
+                // 切点标记（圆+线）
+                painter.circle_stroke(screen, size * 0.6, stroke);
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - size, screen.y + size), egui::Pos2::new(screen.x + size, screen.y - size)],
+                    stroke,
+                );
+            }
+            SnapType::Nearest => {
+                // 最近点标记（沙漏形）
+                let half = size * 0.7;
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - half, screen.y - size), egui::Pos2::new(screen.x + half, screen.y - size)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - half, screen.y - size), egui::Pos2::new(screen.x + half, screen.y + size)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x + half, screen.y - size), egui::Pos2::new(screen.x - half, screen.y + size)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - half, screen.y + size), egui::Pos2::new(screen.x + half, screen.y + size)],
+                    stroke,
+                );
+            }
+            SnapType::Grid => {
+                // 网格点标记（小+形）
+                let small = size * 0.5;
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x - small, screen.y), egui::Pos2::new(screen.x + small, screen.y)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::Pos2::new(screen.x, screen.y - small), egui::Pos2::new(screen.x, screen.y + small)],
+                    stroke,
+                );
+            }
+            SnapType::Quadrant => {
+                // 象限点标记（菱形）
+                let points = [
+                    egui::Pos2::new(screen.x, screen.y - size),
+                    egui::Pos2::new(screen.x + size, screen.y),
+                    egui::Pos2::new(screen.x, screen.y + size),
+                    egui::Pos2::new(screen.x - size, screen.y),
+                ];
+                painter.add(egui::Shape::closed_line(points.to_vec(), stroke));
+            }
+        }
+    }
+
+    /// 绘制正交辅助线
+    fn draw_ortho_guides(&self, painter: &egui::Painter, rect: &egui::Rect, reference: Point2) {
+        let screen = self.world_to_screen(reference, rect);
+        let guide_color = egui::Color32::from_rgba_unmultiplied(0, 255, 255, 80); // 半透明青色
+        let stroke = egui::Stroke::new(1.0, guide_color);
+
+        // 水平辅助线
+        painter.line_segment(
+            [egui::Pos2::new(rect.left(), screen.y), egui::Pos2::new(rect.right(), screen.y)],
+            stroke,
+        );
+
+        // 垂直辅助线
+        painter.line_segment(
+            [egui::Pos2::new(screen.x, rect.top()), egui::Pos2::new(screen.x, rect.bottom())],
+            stroke,
+        );
+    }
+
+    /// 更新捕捉点
+    fn update_snap(&mut self) {
+        // 获取当前视图内的实体
+        let entities: Vec<&Entity> = self.document.all_entities().collect();
+
+        // 获取参考点（绘图状态下的起始点）
+        let reference_point = match &self.ui_state.edit_state {
+            EditState::Drawing { points, .. } if !points.is_empty() => Some(points[0]),
+            _ => None,
+        };
+
+        // 查找捕捉点
+        let snap = self.ui_state.snap_state.engine_mut().find_snap_point(
+            self.ui_state.mouse_world_pos,
+            &entities,
+            self.camera_zoom,
+            reference_point,
+        );
+
+        self.ui_state.snap_state.current_snap = snap;
+    }
+
+    /// 应用正交约束
+    /// 
+    /// 将目标点约束到从参考点出发的水平或垂直方向
+    fn apply_ortho_constraint(&self, reference: Point2, target: Point2) -> Point2 {
+        if !self.ui_state.ortho_mode {
+            return target;
+        }
+
+        let dx = (target.x - reference.x).abs();
+        let dy = (target.y - reference.y).abs();
+
+        if dx > dy {
+            // 水平方向更近，约束到水平线
+            Point2::new(target.x, reference.y)
+        } else {
+            // 垂直方向更近，约束到垂直线
+            Point2::new(reference.x, target.y)
+        }
+    }
+
+    /// 获取有效的绘图点（应用捕捉和正交约束）
+    fn get_effective_draw_point(&self) -> Point2 {
+        let base_point = self.ui_state.effective_point();
+
+        // 如果正在绘图且有参考点，应用正交约束
+        if let EditState::Drawing { points, .. } = &self.ui_state.edit_state {
+            if !points.is_empty() && self.ui_state.ortho_mode {
+                let reference = *points.last().unwrap();
+                return self.apply_ortho_constraint(reference, base_point);
+            }
+        }
+
+        base_point
+    }
+
     /// 绘制预览
     fn draw_preview(&self, painter: &egui::Painter, rect: &egui::Rect) {
         if let EditState::Drawing { tool, points } = &self.ui_state.edit_state {
@@ -230,11 +422,12 @@ impl ZcadApp {
             }
             
             let preview_color = Color::from_hex(0xFF00FF);
-            let mouse_pos = self.ui_state.mouse_world_pos;
+            // 使用捕捉点和正交约束
+            let mouse_pos = self.get_effective_draw_point();
 
             match tool {
                 DrawingTool::Line => {
-                    let line = Line::new(points[0], mouse_pos);
+                    let line = Line::new(*points.last().unwrap(), mouse_pos);
                     self.draw_geometry(painter, rect, &Geometry::Line(line), preview_color);
                 }
                 DrawingTool::Circle => {
@@ -257,6 +450,36 @@ impl ZcadApp {
                     );
                     self.draw_geometry(painter, rect, &Geometry::Polyline(rect_geom), preview_color);
                 }
+                DrawingTool::Arc => {
+                    if points.len() == 1 {
+                        // 只有起点，画到鼠标的直线预览
+                        let line = Line::new(points[0], mouse_pos);
+                        self.draw_geometry(painter, rect, &Geometry::Line(line), preview_color);
+                    } else if points.len() == 2 {
+                        // 有两个点，尝试预览圆弧
+                        if let Some(arc) = Arc::from_three_points(points[0], points[1], mouse_pos) {
+                            self.draw_geometry(painter, rect, &Geometry::Arc(arc), preview_color);
+                        } else {
+                            // 共线，画两条线
+                            let line1 = Line::new(points[0], points[1]);
+                            let line2 = Line::new(points[1], mouse_pos);
+                            self.draw_geometry(painter, rect, &Geometry::Line(line1), preview_color);
+                            self.draw_geometry(painter, rect, &Geometry::Line(line2), preview_color);
+                        }
+                    }
+                }
+                DrawingTool::Polyline => {
+                    // 绘制已有的线段
+                    for i in 0..points.len().saturating_sub(1) {
+                        let line = Line::new(points[i], points[i + 1]);
+                        self.draw_geometry(painter, rect, &Geometry::Line(line), preview_color);
+                    }
+                    // 绘制到鼠标的预览线段
+                    if let Some(&last) = points.last() {
+                        let line = Line::new(last, mouse_pos);
+                        self.draw_geometry(painter, rect, &Geometry::Line(line), preview_color);
+                    }
+                }
                 _ => {}
             }
         }
@@ -264,7 +487,8 @@ impl ZcadApp {
 
     /// 处理左键点击
     fn handle_left_click(&mut self) {
-        let world_pos = self.ui_state.mouse_world_pos;
+        // 使用捕捉点和正交约束
+        let world_pos = self.get_effective_draw_point();
 
         match &self.ui_state.edit_state {
             EditState::Idle => match self.ui_state.current_tool {
@@ -289,6 +513,27 @@ impl ZcadApp {
                     };
                     self.ui_state.status_message = "指定对角点:".to_string();
                 }
+                DrawingTool::Arc => {
+                    self.ui_state.edit_state = EditState::Drawing {
+                        tool: DrawingTool::Arc,
+                        points: vec![world_pos],
+                    };
+                    self.ui_state.status_message = "圆弧: 指定第二点:".to_string();
+                }
+                DrawingTool::Polyline => {
+                    self.ui_state.edit_state = EditState::Drawing {
+                        tool: DrawingTool::Polyline,
+                        points: vec![world_pos],
+                    };
+                    self.ui_state.status_message = "多段线: 指定下一点 (右键结束):".to_string();
+                }
+                DrawingTool::Point => {
+                    // 点直接创建，不需要绘图状态
+                    let point = Point::from_point2(world_pos);
+                    let entity = Entity::new(Geometry::Point(point));
+                    self.document.add_entity(entity);
+                    self.ui_state.status_message = "点已创建".to_string();
+                }
                 DrawingTool::Select => {
                     let hits = self.document.query_point(&world_pos, 5.0 / self.camera_zoom);
                     self.ui_state.clear_selection();
@@ -299,9 +544,10 @@ impl ZcadApp {
                         self.ui_state.status_message.clear();
                     }
                 }
-                _ => {}
+                DrawingTool::None => {}
             },
             EditState::Drawing { tool, points } => {
+                let tool = *tool;
                 let mut new_points = points.clone();
                 new_points.push(world_pos);
 
@@ -347,10 +593,69 @@ impl ZcadApp {
                             self.ui_state.status_message = "矩形已创建".to_string();
                         }
                     }
+                    DrawingTool::Arc => {
+                        // 三点圆弧：起点、经过点、终点
+                        if new_points.len() == 2 {
+                            // 第二个点
+                            self.ui_state.edit_state = EditState::Drawing {
+                                tool: DrawingTool::Arc,
+                                points: new_points,
+                            };
+                            self.ui_state.status_message = "圆弧: 指定终点:".to_string();
+                        } else if new_points.len() >= 3 {
+                            // 三个点，创建圆弧
+                            if let Some(arc) = Arc::from_three_points(
+                                new_points[0],
+                                new_points[1],
+                                new_points[2],
+                            ) {
+                                let entity = Entity::new(Geometry::Arc(arc));
+                                self.document.add_entity(entity);
+                                self.ui_state.status_message = "圆弧已创建".to_string();
+                            } else {
+                                self.ui_state.status_message = "无法创建圆弧（三点共线）".to_string();
+                            }
+                            self.ui_state.edit_state = EditState::Idle;
+                        }
+                    }
+                    DrawingTool::Polyline => {
+                        // 多段线：持续添加点，右键结束
+                        self.ui_state.edit_state = EditState::Drawing {
+                            tool: DrawingTool::Polyline,
+                            points: new_points,
+                        };
+                        self.ui_state.status_message = "多段线: 指定下一点 (右键结束):".to_string();
+                    }
                     _ => {}
                 }
             }
             _ => {}
+        }
+    }
+
+    /// 处理右键点击（结束多段线等）
+    fn handle_right_click(&mut self) {
+        if let EditState::Drawing { tool, points } = &self.ui_state.edit_state {
+            match tool {
+                DrawingTool::Polyline => {
+                    if points.len() >= 2 {
+                        // 创建多段线
+                        let polyline = Polyline::from_points(points.clone(), false);
+                        let entity = Entity::new(Geometry::Polyline(polyline));
+                        self.document.add_entity(entity);
+                        self.ui_state.status_message = format!("多段线已创建 ({} 个点)", points.len());
+                    } else {
+                        self.ui_state.status_message = "取消".to_string();
+                    }
+                    self.ui_state.edit_state = EditState::Idle;
+                }
+                _ => {
+                    // 其他工具右键取消
+                    self.ui_state.cancel();
+                }
+            }
+        } else {
+            self.ui_state.cancel();
         }
     }
 
@@ -371,10 +676,113 @@ impl ZcadApp {
             self.camera_zoom = zoom_x.min(zoom_y).clamp(0.01, 100.0);
         }
     }
+
+    /// 打开文件对话框 - 打开文件
+    fn show_open_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("ZCAD Files", &["zcad"])
+            .add_filter("DXF Files", &["dxf"])
+            .add_filter("All Files", &["*"])
+            .set_title("打开文件")
+            .pick_file()
+        {
+            self.pending_file_op = Some(FileOperation::Open(path));
+        }
+    }
+
+    /// 打开文件对话框 - 保存文件
+    fn show_save_dialog(&mut self) {
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("ZCAD Files", &["zcad"])
+            .add_filter("DXF Files", &["dxf"])
+            .set_title("保存文件");
+
+        // 如果已有文件名，使用它
+        if let Some(path) = self.document.file_path() {
+            if let Some(file_name) = path.file_name() {
+                dialog = dialog.set_file_name(file_name.to_string_lossy().as_ref());
+            }
+        }
+
+        if let Some(path) = dialog.save_file() {
+            self.pending_file_op = Some(FileOperation::Save(path));
+        }
+    }
+
+    /// 处理文件操作
+    fn process_file_operations(&mut self) {
+        if let Some(op) = self.pending_file_op.take() {
+            match op {
+                FileOperation::Open(path) => {
+                    match Document::open(&path) {
+                        Ok(doc) => {
+                            self.document = doc;
+                            self.ui_state.clear_selection();
+                            self.zoom_to_fit();
+                            self.ui_state.status_message = 
+                                format!("已打开: {}", path.display());
+                            info!("Opened file: {}", path.display());
+                        }
+                        Err(e) => {
+                            self.ui_state.status_message = 
+                                format!("打开失败: {}", e);
+                            tracing::error!("Failed to open file: {}", e);
+                        }
+                    }
+                }
+                FileOperation::Save(path) => {
+                    match self.document.save_as(&path) {
+                        Ok(_) => {
+                            self.ui_state.status_message = 
+                                format!("已保存: {}", path.display());
+                            info!("Saved file: {}", path.display());
+                        }
+                        Err(e) => {
+                            self.ui_state.status_message = 
+                                format!("保存失败: {}", e);
+                            tracing::error!("Failed to save file: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 快速保存（已有路径）
+    fn quick_save(&mut self) {
+        if self.document.file_path().is_some() {
+            match self.document.save() {
+                Ok(_) => {
+                    self.ui_state.status_message = "已保存".to_string();
+                    info!("Quick saved file");
+                }
+                Err(e) => {
+                    self.ui_state.status_message = format!("保存失败: {}", e);
+                    tracing::error!("Failed to quick save: {}", e);
+                }
+            }
+        } else {
+            // 没有路径，显示另存为对话框
+            self.show_save_dialog();
+        }
+    }
 }
 
 impl eframe::App for ZcadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 处理文件操作
+        self.process_file_operations();
+        
+        // 更新窗口标题
+        let title = if let Some(path) = self.document.file_path() {
+            let modified = if self.document.is_modified() { "*" } else { "" };
+            format!("ZCAD - {}{}", path.display(), modified)
+        } else {
+            let modified = if self.document.is_modified() { "*" } else { "" };
+            format!("ZCAD - Untitled{}", modified)
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        
         // 深色主题
         ctx.set_visuals(egui::Visuals::dark());
 
@@ -421,11 +829,24 @@ impl eframe::App for ZcadApp {
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("文件", |ui| {
-                    if ui.button("📄 新建 (N)").clicked() {
+                    if ui.button("📄 新建 (Ctrl+N)").clicked() {
                         self.document = Document::new();
                         self.ui_state.clear_selection();
                         self.ui_state.status_message = "新文档".to_string();
-                        ui.close();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("📂 打开 (Ctrl+O)").clicked() {
+                        self.show_open_dialog();
+                        ui.close_menu();
+                    }
+                    if ui.button("💾 保存 (Ctrl+S)").clicked() {
+                        self.quick_save();
+                        ui.close_menu();
+                    }
+                    if ui.button("💾 另存为 (Ctrl+Shift+S)").clicked() {
+                        self.show_save_dialog();
+                        ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("🚪 退出").clicked() {
@@ -438,35 +859,35 @@ impl eframe::App for ZcadApp {
                             self.document.remove_entity(&id);
                         }
                         self.ui_state.clear_selection();
-                        ui.close();
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("视图", |ui| {
                     if ui.button("📐 缩放至全部 (Z)").clicked() {
                         self.zoom_to_fit();
-                        ui.close();
+                        ui.close_menu();
                     }
                     if ui.button(format!("{} 网格 (G)", if grid { "☑" } else { "☐" })).clicked() {
                         self.ui_state.show_grid = !self.ui_state.show_grid;
-                        ui.close();
+                        ui.close_menu();
                     }
                     if ui.button(format!("{} 正交 (F8)", if ortho { "☑" } else { "☐" })).clicked() {
                         self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
-                        ui.close();
+                        ui.close_menu();
                     }
                 });
                 ui.menu_button("绘图", |ui| {
                     if ui.button("╱ 直线 (L)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Line);
-                        ui.close();
+                        ui.close_menu();
                     }
                     if ui.button("○ 圆 (C)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Circle);
-                        ui.close();
+                        ui.close_menu();
                     }
                     if ui.button("▭ 矩形 (R)").clicked() {
                         self.ui_state.set_tool(DrawingTool::Rectangle);
-                        ui.close();
+                        ui.close_menu();
                     }
                 });
             });
@@ -515,16 +936,36 @@ impl eframe::App for ZcadApp {
         });
 
         // ===== 状态栏 =====
+        // 捕捉信息快照
+        let snap_enabled = self.ui_state.snap_state.enabled;
+        let snap_info = self.ui_state.snap_state.current_snap.as_ref().map(|s| {
+            (s.snap_type.name().to_string(), s.point)
+        });
+        let effective_pos = self.ui_state.effective_point();
+
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&status);
+                
+                // 捕捉状态显示
+                if let Some((snap_name, _)) = &snap_info {
+                    ui.separator();
+                    ui.colored_label(egui::Color32::YELLOW, format!("⊕ {}", snap_name));
+                }
+                
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(format!("X:{:>8.2} Y:{:>8.2}", mouse_world.x, mouse_world.y));
+                    ui.label(format!("X:{:>8.2} Y:{:>8.2}", effective_pos.x, effective_pos.y));
                     ui.separator();
                     ui.label(format!("实体: {}", entity_count));
                     if selected_count > 0 {
                         ui.separator();
                         ui.label(format!("选中: {}", selected_count));
+                    }
+                    ui.separator();
+                    // 捕捉开关
+                    let snap_text = if snap_enabled { "🔗 捕捉" } else { "🔗" };
+                    if ui.selectable_label(snap_enabled, snap_text).on_hover_text("对象捕捉 (F3)").clicked() {
+                        self.ui_state.snap_state.enabled = !self.ui_state.snap_state.enabled;
                     }
                 });
             });
@@ -575,6 +1016,8 @@ impl eframe::App for ZcadApp {
                 // 处理鼠标位置
                 if let Some(hover_pos) = response.hover_pos() {
                     self.ui_state.mouse_world_pos = self.screen_to_world(hover_pos, &rect);
+                    // 更新捕捉点
+                    self.update_snap();
                 }
 
                 // 处理滚轮缩放
@@ -605,16 +1048,42 @@ impl eframe::App for ZcadApp {
                     self.handle_left_click();
                 }
 
-                // 处理右键取消
+                // 处理右键（结束多段线或取消）
                 if response.clicked_by(egui::PointerButton::Secondary) {
-                    self.ui_state.cancel();
+                    self.handle_right_click();
                 }
 
                 // 处理键盘快捷键
                 ui.input(|i| {
+                    // 文件操作
+                    if i.modifiers.command && i.key_pressed(egui::Key::N) {
+                        self.document = Document::new();
+                        self.ui_state.clear_selection();
+                        self.ui_state.status_message = "新文档".to_string();
+                    }
+                    if i.modifiers.command && i.key_pressed(egui::Key::O) {
+                        self.show_open_dialog();
+                    }
+                    if i.modifiers.command && i.key_pressed(egui::Key::S) {
+                        if i.modifiers.shift {
+                            self.show_save_dialog();
+                        } else {
+                            self.quick_save();
+                        }
+                    }
+                    
+                    // 编辑操作
                     if i.key_pressed(egui::Key::Escape) {
                         self.ui_state.cancel();
                     }
+                    if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                        for id in self.ui_state.selected_entities.clone() {
+                            self.document.remove_entity(&id);
+                        }
+                        self.ui_state.clear_selection();
+                    }
+                    
+                    // 绘图工具
                     if i.key_pressed(egui::Key::L) {
                         self.ui_state.set_tool(DrawingTool::Line);
                     }
@@ -627,25 +1096,31 @@ impl eframe::App for ZcadApp {
                     if i.key_pressed(egui::Key::Space) {
                         self.ui_state.set_tool(DrawingTool::Select);
                     }
-                    if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
-                        for id in self.ui_state.selected_entities.clone() {
-                            self.document.remove_entity(&id);
-                        }
-                        self.ui_state.clear_selection();
-                    }
+                    
+                    // 视图操作
                     if i.key_pressed(egui::Key::Z) {
                         self.zoom_to_fit();
                     }
                     if i.key_pressed(egui::Key::G) {
                         self.ui_state.show_grid = !self.ui_state.show_grid;
                     }
+                    if i.key_pressed(egui::Key::F3) {
+                        self.ui_state.snap_state.enabled = !self.ui_state.snap_state.enabled;
+                        let status = if self.ui_state.snap_state.enabled { "捕捉已启用" } else { "捕捉已禁用" };
+                        self.ui_state.status_message = status.to_string();
+                    }
                     if i.key_pressed(egui::Key::F8) {
                         self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
+                        let status = if self.ui_state.ortho_mode { "正交模式已启用" } else { "正交模式已禁用" };
+                        self.ui_state.status_message = status.to_string();
                     }
-                    if i.key_pressed(egui::Key::N) {
-                        self.document = Document::new();
-                        self.ui_state.clear_selection();
-                        self.ui_state.status_message = "新文档".to_string();
+                    // 圆弧快捷键
+                    if i.key_pressed(egui::Key::A) {
+                        self.ui_state.set_tool(DrawingTool::Arc);
+                    }
+                    // 多段线快捷键
+                    if i.key_pressed(egui::Key::P) {
+                        self.ui_state.set_tool(DrawingTool::Polyline);
                     }
                 });
 
@@ -669,9 +1144,26 @@ impl eframe::App for ZcadApp {
                 // 绘制预览
                 self.draw_preview(&painter, &rect);
 
-                // 绘制十字光标
+                // 绘制正交辅助线
+                if self.ui_state.ortho_mode {
+                    if let EditState::Drawing { points, .. } = &self.ui_state.edit_state {
+                        if let Some(&reference) = points.last() {
+                            self.draw_ortho_guides(&painter, &rect, reference);
+                        }
+                    }
+                }
+
+                // 绘制捕捉标记
+                if let Some(ref snap) = self.ui_state.snap_state.current_snap {
+                    if self.ui_state.snap_state.enabled {
+                        self.draw_snap_marker(&painter, &rect, snap.snap_type, snap.point);
+                    }
+                }
+
+                // 绘制十字光标（使用捕捉点如果有的话）
                 if response.hovered() {
-                    self.draw_crosshair(&painter, &rect, self.ui_state.mouse_world_pos);
+                    let cursor_pos = self.ui_state.effective_point();
+                    self.draw_crosshair(&painter, &rect, cursor_pos);
                 }
             });
 

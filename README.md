@@ -70,12 +70,51 @@ zcad/
 
 ## 🚀 快速开始
 
-### 前置要求
+### 下载预编译版本
+
+前往 [Releases 页面](https://github.com/zcad/zcad/releases) 下载适合您系统的版本：
+
+- **Windows**: `zcad-windows-x64.zip`
+- **macOS (Intel)**: `zcad-macos-x64.tar.gz`
+- **macOS (Apple Silicon)**: `zcad-macos-arm64.tar.gz`
+- **Linux**: `zcad-linux-x64.tar.gz`
+
+#### Windows
+1. 解压 zip 文件
+2. 双击 `zcad.exe` 运行
+3. **系统要求**: Windows 10 (1809+) 或 Windows 11，支持 DirectX 12
+
+#### macOS
+```bash
+# 解压
+tar -xzf zcad-macos-*.tar.gz
+cd zcad
+
+# 运行
+./zcad
+```
+
+#### Linux
+```bash
+# 解压
+tar -xzf zcad-linux-x64.tar.gz
+cd zcad
+
+# 可能需要安装依赖
+sudo apt install libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxkbcommon0
+
+# 运行
+./zcad
+```
+
+### 从源码构建
+
+#### 前置要求
 
 - Rust 1.83+
 - 支持Vulkan/Metal/DX12的GPU
 
-### 构建
+#### 构建步骤
 
 ```bash
 # 克隆仓库
@@ -84,7 +123,46 @@ cd zcad
 
 # 构建并运行
 cargo run --release
+
+# 或仅构建
+cargo build --release
+# 可执行文件位于: target/release/zcad (或 zcad.exe)
 ```
+
+#### 发布打包
+
+```bash
+# 本地平台
+./scripts/build-native.sh
+
+# Windows 交叉编译（需要 mingw-w64）
+./scripts/build-windows.sh
+```
+
+### ⌨️ 快捷键
+
+#### 文件操作
+- `Ctrl+N` - 新建文档
+- `Ctrl+O` - 打开文件 (.zcad / .dxf)
+- `Ctrl+S` - 保存
+- `Ctrl+Shift+S` - 另存为
+
+#### 绘图工具
+- `L` - 直线
+- `C` - 圆
+- `R` - 矩形
+- `Space` - 选择工具
+
+#### 视图操作
+- `Z` - 缩放至全部
+- `G` - 切换网格显示
+- `F8` - 切换正交模式
+- `鼠标滚轮` - 缩放视图
+- `鼠标中键拖动` - 平移视图
+
+#### 编辑操作
+- `Del` - 删除选中对象
+- `Esc` - 取消当前操作
 
 ## 🗺️ 路线图
 

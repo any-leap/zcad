@@ -30,6 +30,7 @@ pub mod layer;
 pub mod math;
 pub mod parametric;
 pub mod properties;
+pub mod snap;
 pub mod solver;
 pub mod spatial;
 pub mod transform;
@@ -46,6 +47,7 @@ pub mod prelude {
     pub use crate::math::{Point2, Point3, Vector2, Vector3};
     pub use crate::parametric::{Constraint, ConstraintSystem, Variable};
     pub use crate::properties::{Color, LineType, Properties};
+    pub use crate::snap::{SnapConfig, SnapEngine, SnapMask, SnapPoint, SnapType};
     pub use crate::solver::NewtonSolver;
     pub use crate::transform::Transform2D;
     pub use crate::version_control::{VersionControl, Commit, Branch};

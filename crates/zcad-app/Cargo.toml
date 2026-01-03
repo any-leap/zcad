@@ -25,4 +25,5 @@ tracing-subscriber.workspace = true
 anyhow.workspace = true
 
 pollster = "0.4"
+rfd = "0.15"  # 文件对话框
 

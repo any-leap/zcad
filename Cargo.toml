@@ -54,6 +54,8 @@ dxf = "0.6"
 lto = "thin"
 codegen-units = 1
 opt-level = 3
+strip = true      # 移除调试符号，减少体积
+panic = "abort"   # 减少展开代码
 
 [profile.dev]
 opt-level = 1

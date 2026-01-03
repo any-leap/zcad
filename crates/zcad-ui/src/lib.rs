@@ -9,5 +9,5 @@ pub mod properties_panel;
 pub mod state;
 pub mod toolbar;
 
-pub use state::UiState;
+pub use state::{DrawingTool, EditState, SnapMode, SnapState, UiState};
 

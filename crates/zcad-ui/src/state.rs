@@ -2,6 +2,7 @@
 
 use zcad_core::entity::EntityId;
 use zcad_core::math::Point2;
+use zcad_core::snap::{SnapConfig, SnapEngine, SnapPoint, SnapType};
 
 /// 当前绘图工具
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +45,7 @@ impl DrawingTool {
     }
 }
 
-/// 捕捉模式
+/// 捕捉模式（保留向后兼容，实际使用SnapEngine）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapMode {
     pub endpoint: bool,
@@ -69,6 +70,63 @@ impl Default for SnapMode {
             nearest: false,
             grid: false,
         }
+    }
+}
+
+/// 当前捕捉状态
+#[derive(Debug, Clone)]
+pub struct SnapState {
+    /// 捕捉引擎
+    engine: SnapEngine,
+    /// 当前捕捉到的点
+    pub current_snap: Option<SnapPoint>,
+    /// 是否启用捕捉
+    pub enabled: bool,
+}
+
+impl SnapState {
+    pub fn new() -> Self {
+        Self {
+            engine: SnapEngine::default(),
+            current_snap: None,
+            enabled: true,
+        }
+    }
+
+    /// 获取捕捉引擎的可变引用
+    pub fn engine_mut(&mut self) -> &mut SnapEngine {
+        &mut self.engine
+    }
+
+    /// 获取捕捉引擎的引用
+    pub fn engine(&self) -> &SnapEngine {
+        &self.engine
+    }
+
+    /// 获取捕捉配置
+    pub fn config(&self) -> &SnapConfig {
+        self.engine.config()
+    }
+
+    /// 获取捕捉配置（可变）
+    pub fn config_mut(&mut self) -> &mut SnapConfig {
+        self.engine.config_mut()
+    }
+
+    /// 切换捕捉类型
+    pub fn toggle_snap_type(&mut self, snap_type: SnapType) {
+        self.engine.config_mut().enabled_types.toggle(snap_type);
+    }
+
+    /// 检查捕捉类型是否启用
+    pub fn is_snap_type_enabled(&self, snap_type: SnapType) -> bool {
+        self.engine.config().enabled_types.is_enabled(snap_type)
+    }
+}
+
+impl Default for SnapState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -115,13 +173,16 @@ pub struct UiState {
     /// 选中的实体
     pub selected_entities: Vec<EntityId>,
 
-    /// 鼠标在世界坐标中的位置
+    /// 鼠标在世界坐标中的位置（原始位置）
     pub mouse_world_pos: Point2,
 
-    /// 捕捉到的点（如果有）
+    /// 捕捉状态
+    pub snap_state: SnapState,
+
+    /// 捕捉到的点（如果有）- 保留向后兼容
     pub snap_point: Option<Point2>,
 
-    /// 捕捉模式
+    /// 捕捉模式 - 保留向后兼容
     pub snap_mode: SnapMode,
 
     /// 是否显示网格
@@ -149,6 +210,27 @@ pub struct UiState {
     pub ortho_mode: bool,
 }
 
+impl UiState {
+    /// 获取实际使用的点（优先使用捕捉点）
+    pub fn effective_point(&self) -> Point2 {
+        if let Some(ref snap) = self.snap_state.current_snap {
+            if self.snap_state.enabled {
+                return snap.point;
+            }
+        }
+        self.mouse_world_pos
+    }
+
+    /// 获取当前捕捉点信息
+    pub fn current_snap(&self) -> Option<&SnapPoint> {
+        if self.snap_state.enabled {
+            self.snap_state.current_snap.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
 impl Default for UiState {
     fn default() -> Self {
         Self {
@@ -156,6 +238,7 @@ impl Default for UiState {
             edit_state: EditState::Idle,
             selected_entities: Vec::new(),
             mouse_world_pos: Point2::origin(),
+            snap_state: SnapState::default(),
             snap_point: None,
             snap_mode: SnapMode::default(),
             show_grid: true,
