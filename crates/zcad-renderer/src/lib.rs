@@ -10,10 +10,14 @@
 //! - **抗锯齿**：MSAA和线条抗锯齿
 
 pub mod camera;
+pub mod compute;
 pub mod pipeline;
 pub mod renderer;
+pub mod tile;
 pub mod vertex;
 
 pub use camera::Camera2D;
+pub use compute::{BooleanOp, ComputeShader};
 pub use renderer::Renderer;
+pub use tile::{Tile, TileManager};
 

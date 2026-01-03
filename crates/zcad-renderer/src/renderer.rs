@@ -4,9 +4,12 @@
 //! 当前版本主要用于未来扩展，egui渲染由eframe处理。
 
 use crate::camera::Camera2D;
+use crate::compute::{ComputeShader, BooleanOp};
 use crate::pipeline::LinePipeline;
+use crate::tile::TileManager;
 use crate::vertex::{CameraUniform, LineVertex};
 use thiserror::Error;
+use zcad_core::math::BoundingBox2;
 use wgpu::util::DeviceExt;
 use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline};
 use zcad_core::math::Point2;
@@ -26,6 +29,9 @@ pub enum RenderError {
 
     #[error("Surface error: {0}")]
     Surface(#[from] wgpu::SurfaceError),
+
+    #[error("Compute error: {0}")]
+    Compute(String),
 }
 
 /// GPU渲染器（保留用于未来的高性能渲染需求）
@@ -39,9 +45,15 @@ pub struct Renderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
 
+    // 计算着色器
+    compute_shader: ComputeShader,
+
+    // Tile-based渲染系统
+    tile_manager: TileManager,
+
     // 渲染缓冲区
     line_vertices: Vec<LineVertex>,
-    
+
     // 网格设置
     grid_visible: bool,
     grid_spacing: f64,
@@ -102,6 +114,12 @@ impl Renderer {
         // 创建管线
         let line_pipeline = LinePipeline::new(&device, surface_format);
 
+        // 创建计算着色器
+        let compute_shader = ComputeShader::new(&device, &queue).map_err(|e| RenderError::Compute(e.to_string()))?;
+
+        // 创建Tile管理器
+        let tile_manager = TileManager::new(256, size.width, size.height); // 256x256像素的Tile
+
         // 创建相机缓冲区
         let camera_uniform = CameraUniform::new();
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -127,6 +145,8 @@ impl Renderer {
             line_pipeline,
             camera_buffer,
             camera_bind_group,
+            compute_shader,
+            tile_manager,
             line_vertices: Vec::new(),
             grid_visible: true,
             grid_spacing: 50.0,
@@ -140,6 +160,7 @@ impl Renderer {
             self.surface_config.width = width;
             self.surface_config.height = height;
             self.surface.configure(&self.device, &self.surface_config);
+            self.tile_manager.resize(width, height);
         }
     }
 
@@ -394,30 +415,22 @@ impl Renderer {
         }
     }
 
-    /// 执行渲染
+    /// 执行Tile-based渲染
     pub fn render(&mut self, clear_color: Color) -> Result<(), RenderError> {
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
+            label: Some("Tile-based Render Encoder"),
         });
 
-        // 创建顶点缓冲区
-        let vertex_buffer = if !self.line_vertices.is_empty() {
-            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Line Vertex Buffer"),
-                contents: bytemuck::cast_slice(&self.line_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }))
-        } else {
-            None
-        };
+        // Tile-based渲染：只渲染脏Tile
+        let dirty_regions = self.tile_manager.optimize_dirty_regions();
 
         {
             let clear = clear_color.to_f32_array();
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+                label: Some("Tile-based Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -440,14 +453,39 @@ impl Renderer {
             render_pass.set_pipeline(&self.line_pipeline.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            if let Some(buffer) = &vertex_buffer {
-                render_pass.set_vertex_buffer(0, buffer.slice(..));
+            // 渲染所有可见Tile（包括非脏的，用于完整画面）
+            for tile in self.tile_manager.visible_tiles() {
+                if !tile.vertices.is_empty() {
+                    // 为每个Tile创建顶点缓冲区
+                    let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("Tile Vertex Buffer ({}, {})", tile.screen_x, tile.screen_y)),
+                        contents: bytemuck::cast_slice(&tile.vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+
+                    render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    render_pass.draw(0..tile.vertex_count() as u32, 0..1);
+                }
+            }
+
+            // 同时渲染全局几何体（如十字光标等）
+            if !self.line_vertices.is_empty() {
+                let global_vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Global Line Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&self.line_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+                render_pass.set_vertex_buffer(0, global_vertex_buffer.slice(..));
                 render_pass.draw(0..self.line_vertices.len() as u32, 0..1);
             }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        // 清除脏标记
+        self.tile_manager.clear_dirty_flags();
 
         Ok(())
     }
@@ -470,5 +508,158 @@ impl Renderer {
     /// 获取视口尺寸
     pub fn size(&self) -> (u32, u32) {
         (self.surface_config.width, self.surface_config.height)
+    }
+
+    /// 执行布尔运算（异步）
+    pub async fn boolean_operation(
+        &self,
+        geom1: &Geometry,
+        geom2: &Geometry,
+        operation: BooleanOp,
+        tolerance: f64,
+    ) -> Result<Vec<Geometry>, RenderError> {
+        self.compute_shader.boolean_operation(geom1, geom2, operation, tolerance)
+            .await
+            .map_err(|e| RenderError::Compute(e.to_string()))
+    }
+
+    /// 执行几何偏移（异步）
+    pub async fn offset_geometry(
+        &self,
+        geometry: &Geometry,
+        distance: f64,
+        tolerance: f64,
+    ) -> Result<Vec<Geometry>, RenderError> {
+        self.compute_shader.offset_geometry(geometry, distance, tolerance)
+            .await
+            .map_err(|e| RenderError::Compute(e.to_string()))
+    }
+
+    /// 更新Tile系统（基于当前相机）
+    pub fn update_tiles(&mut self, camera: &Camera2D) {
+        let bounds = camera.visible_bounds();
+        self.tile_manager.update_visible_tiles(&bounds);
+    }
+
+    /// 添加几何体到Tile系统
+    pub fn add_geometry_to_tiles(&mut self, geometry: &Geometry, color: Color) {
+        let mut temp_vertices = Vec::new();
+        self.draw_geometry_to_buffer(geometry, color, &mut temp_vertices);
+
+        if !temp_vertices.is_empty() {
+            let bounds = geometry.bounding_box();
+            self.tile_manager.add_geometry_to_tiles(&temp_vertices, &bounds);
+        }
+    }
+
+    /// 标记区域为脏（需要重新渲染）
+    pub fn mark_region_dirty(&mut self, bounds: &BoundingBox2) {
+        self.tile_manager.mark_tiles_dirty(bounds);
+    }
+
+    /// 获取Tile统计信息
+    pub fn tile_stats(&self) -> &crate::tile::TileStats {
+        &self.tile_manager.stats
+    }
+
+    /// 辅助方法：将几何体绘制到顶点缓冲区
+    fn draw_geometry_to_buffer(&self, geometry: &Geometry, color: Color, vertices: &mut Vec<LineVertex>) {
+        let color_arr = color.to_f32_array();
+
+        match geometry {
+            Geometry::Point(p) => {
+                let size = 3.0;
+                let x = p.position.x as f32;
+                let y = p.position.y as f32;
+                vertices.push(LineVertex::new(x - size, y, color_arr));
+                vertices.push(LineVertex::new(x + size, y, color_arr));
+                vertices.push(LineVertex::new(x, y - size, color_arr));
+                vertices.push(LineVertex::new(x, y + size, color_arr));
+            }
+            Geometry::Line(line) => {
+                vertices.push(LineVertex::new(
+                    line.start.x as f32,
+                    line.start.y as f32,
+                    color_arr,
+                ));
+                vertices.push(LineVertex::new(
+                    line.end.x as f32,
+                    line.end.y as f32,
+                    color_arr,
+                ));
+            }
+            Geometry::Circle(circle) => {
+                let segments = (circle.radius * 2.0).clamp(32.0, 256.0) as usize;
+                let angle_step = 2.0 * std::f64::consts::PI / segments as f64;
+
+                for i in 0..segments {
+                    let a1 = i as f64 * angle_step;
+                    let a2 = (i + 1) as f64 * angle_step;
+
+                    let p1 = circle.point_at_angle(a1);
+                    let p2 = circle.point_at_angle(a2);
+
+                    vertices.push(LineVertex::new(p1.x as f32, p1.y as f32, color_arr));
+                    vertices.push(LineVertex::new(p2.x as f32, p2.y as f32, color_arr));
+                }
+            }
+            Geometry::Arc(arc) => {
+                let sweep = arc.sweep_angle();
+                let segments = ((arc.radius * sweep.abs()).clamp(8.0, 128.0)) as usize;
+                let angle_step = sweep / segments as f64;
+
+                for i in 0..segments {
+                    let a1 = arc.start_angle + i as f64 * angle_step;
+                    let a2 = arc.start_angle + (i + 1) as f64 * angle_step;
+
+                    let p1 = Point2::new(
+                        arc.center.x + arc.radius * a1.cos(),
+                        arc.center.y + arc.radius * a1.sin(),
+                    );
+                    let p2 = Point2::new(
+                        arc.center.x + arc.radius * a2.cos(),
+                        arc.center.y + arc.radius * a2.sin(),
+                    );
+
+                    vertices.push(LineVertex::new(p1.x as f32, p1.y as f32, color_arr));
+                    vertices.push(LineVertex::new(p2.x as f32, p2.y as f32, color_arr));
+                }
+            }
+            Geometry::Polyline(polyline) => {
+                if polyline.vertices.len() < 2 {
+                    return;
+                }
+
+                for i in 0..polyline.segment_count() {
+                    let v1 = &polyline.vertices[i];
+                    let v2 = &polyline.vertices[(i + 1) % polyline.vertices.len()];
+
+                    if v1.bulge.abs() < 0.001 {
+                        vertices.push(LineVertex::new(
+                            v1.point.x as f32,
+                            v1.point.y as f32,
+                            color_arr,
+                        ));
+                        vertices.push(LineVertex::new(
+                            v2.point.x as f32,
+                            v2.point.y as f32,
+                            color_arr,
+                        ));
+                    } else {
+                        // 简化的弧线处理（实际应该细分）
+                        vertices.push(LineVertex::new(
+                            v1.point.x as f32,
+                            v1.point.y as f32,
+                            color_arr,
+                        ));
+                        vertices.push(LineVertex::new(
+                            v2.point.x as f32,
+                            v2.point.y as f32,
+                            color_arr,
+                        ));
+                    }
+                }
+            }
+        }
     }
 }

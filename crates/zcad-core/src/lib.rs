@@ -21,21 +21,33 @@
 //! println!("Length: {}", line.length());
 //! ```
 
+pub mod async_core;
+pub mod buffer;
 pub mod entity;
 pub mod geometry;
+pub mod history;
 pub mod layer;
 pub mod math;
+pub mod parametric;
 pub mod properties;
+pub mod solver;
 pub mod spatial;
 pub mod transform;
+pub mod version_control;
 
 pub mod prelude {
     //! 常用类型的便捷导入
+    pub use crate::async_core::{AsyncCore, Message, MessageBus};
+    pub use crate::buffer::{DoubleBufferedEntities, EntityBuffer};
     pub use crate::entity::{Entity, EntityId};
     pub use crate::geometry::{Arc, Circle, Geometry, Line, Point, Polyline};
+    pub use crate::history::{HistoryTree, Operation, OperationId};
     pub use crate::layer::Layer;
     pub use crate::math::{Point2, Point3, Vector2, Vector3};
+    pub use crate::parametric::{Constraint, ConstraintSystem, Variable};
     pub use crate::properties::{Color, LineType, Properties};
+    pub use crate::solver::NewtonSolver;
     pub use crate::transform::Transform2D;
+    pub use crate::version_control::{VersionControl, Commit, Branch};
 }
 
