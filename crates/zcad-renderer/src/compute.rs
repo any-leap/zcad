@@ -580,6 +580,56 @@ impl ComputeShader {
                 }
             ],
             Geometry::Dimension(_) => vec![], // 暂不支持GPU计算标注
+            Geometry::Ellipse(ellipse) => vec![
+                GpuGeometryData {
+                    geometry_type: 7, // Ellipse
+                    x1: ellipse.center.x as f32,
+                    y1: ellipse.center.y as f32,
+                    x2: ellipse.major_axis.x as f32,
+                    y2: ellipse.major_axis.y as f32,
+                    radius: ellipse.ratio as f32,
+                    bulge: 0.0,
+                    param1: ellipse.start_param as f32,
+                    param2: ellipse.end_param as f32,
+                }
+            ],
+            Geometry::Spline(spline) => {
+                // 样条曲线简化为采样点
+                let points = spline.sample_points(32);
+                let mut data = Vec::new();
+                for pt in points {
+                    data.push(GpuGeometryData {
+                        geometry_type: 8, // Spline point
+                        x1: pt.x as f32,
+                        y1: pt.y as f32,
+                        x2: 0.0,
+                        y2: 0.0,
+                        radius: 0.0,
+                        bulge: 0.0,
+                        param1: 0.0,
+                        param2: 0.0,
+                    });
+                }
+                data
+            },
+            Geometry::Hatch(_) => vec![], // 填充不参与GPU计算
+            Geometry::Leader(leader) => {
+                let mut data = Vec::new();
+                for pt in &leader.vertices {
+                    data.push(GpuGeometryData {
+                        geometry_type: 9, // Leader vertex
+                        x1: pt.x as f32,
+                        y1: pt.y as f32,
+                        x2: 0.0,
+                        y2: 0.0,
+                        radius: 0.0,
+                        bulge: 0.0,
+                        param1: 0.0,
+                        param2: 0.0,
+                    });
+                }
+                data
+            },
         }
     }
 

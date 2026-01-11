@@ -16,6 +16,8 @@ pub enum ActionResult {
     CreateEntities(Vec<Geometry>),
     /// 完成当前 action，修改实体
     ModifyEntities(Vec<(EntityId, Geometry)>),
+    /// 修改单个实体
+    ModifyEntity(EntityId, Geometry),
     /// 完成当前 action，删除实体
     DeleteEntities(Vec<EntityId>),
     /// 取消当前 action
@@ -43,6 +45,9 @@ pub enum ActionType {
     DrawDimension,
     DrawDimensionRadius,
     DrawDimensionDiameter,
+    DrawEllipse,
+    DrawSpline,
+    DrawLeader,
     
     // 修改
     Move,
@@ -50,7 +55,15 @@ pub enum ActionType {
     Rotate,
     Scale,
     Mirror,
+    Offset,
+    Trim,
+    Extend,
+    Fillet,
+    Chamfer,
     Erase,
+    
+    // 夹点编辑
+    GripEdit,
     
     // 其他
     None,
@@ -71,12 +84,21 @@ impl ActionType {
             ActionType::DrawDimension => "Dimension",
             ActionType::DrawDimensionRadius => "Radius Dimension",
             ActionType::DrawDimensionDiameter => "Diameter Dimension",
+            ActionType::DrawEllipse => "Ellipse",
+            ActionType::DrawSpline => "Spline",
+            ActionType::DrawLeader => "Leader",
             ActionType::Move => "Move",
             ActionType::Copy => "Copy",
             ActionType::Rotate => "Rotate",
             ActionType::Scale => "Scale",
             ActionType::Mirror => "Mirror",
+            ActionType::Offset => "Offset",
+            ActionType::Trim => "Trim",
+            ActionType::Extend => "Extend",
+            ActionType::Fillet => "Fillet",
+            ActionType::Chamfer => "Chamfer",
             ActionType::Erase => "Erase",
+            ActionType::GripEdit => "Grip Edit",
             ActionType::None => "None",
         }
     }
@@ -95,12 +117,21 @@ impl ActionType {
             ActionType::DrawDimension => Some("D"),
             ActionType::DrawDimensionRadius => Some("DRA"),
             ActionType::DrawDimensionDiameter => Some("DDI"),
+            ActionType::DrawEllipse => Some("EL"),
+            ActionType::DrawSpline => Some("SPL"),
+            ActionType::DrawLeader => Some("LE"),
             ActionType::Move => Some("M"),
             ActionType::Copy => Some("CO"),
             ActionType::Rotate => Some("RO"),
             ActionType::Scale => Some("SC"),
             ActionType::Mirror => Some("MI"),
+            ActionType::Offset => Some("O"),
+            ActionType::Trim => Some("TR"),
+            ActionType::Extend => Some("EX"),
+            ActionType::Fillet => Some("F"),
+            ActionType::Chamfer => Some("CHA"),
             ActionType::Erase => Some("E"),
+            ActionType::GripEdit => Some("G"),
             ActionType::None => None,
         }
     }
@@ -120,6 +151,8 @@ pub struct ActionContext<'a> {
     pub ortho_mode: bool,
     /// 参考点（用于相对坐标）
     pub reference_point: Option<Point2>,
+    /// 当前缩放级别
+    pub zoom: f64,
 }
 
 impl<'a> ActionContext<'a> {

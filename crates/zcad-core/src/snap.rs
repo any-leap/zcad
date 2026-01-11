@@ -13,7 +13,7 @@
 //! - 网格点 (Grid)
 
 use crate::entity::{Entity, EntityId};
-use crate::geometry::{Arc, Circle, Geometry, Line, Polyline};
+use crate::geometry::{Arc, Circle, Ellipse, Geometry, Leader, Line, Polyline, Spline};
 use crate::math::{Point2, Vector2, EPSILON};
 use serde::{Deserialize, Serialize};
 
@@ -375,6 +375,18 @@ impl SnapEngine {
                     }
                 }
             }
+            Geometry::Ellipse(ellipse) => {
+                self.collect_ellipse_snap_points(ellipse, entity.id, mouse, tolerance);
+            }
+            Geometry::Spline(spline) => {
+                self.collect_spline_snap_points(spline, entity.id, mouse, tolerance);
+            }
+            Geometry::Hatch(_) => {
+                // 填充通常不参与捕捉
+            }
+            Geometry::Leader(leader) => {
+                self.collect_leader_snap_points(leader, entity.id, mouse, tolerance);
+            }
         }
     }
 
@@ -689,6 +701,210 @@ impl SnapEngine {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// 椭圆的捕捉点
+    fn collect_ellipse_snap_points(
+        &mut self,
+        ellipse: &Ellipse,
+        entity_id: EntityId,
+        mouse: Point2,
+        tolerance: f64,
+    ) {
+        let enabled = &self.config.enabled_types;
+
+        // 圆心
+        if enabled.is_enabled(SnapType::Center) {
+            let dist = (ellipse.center - mouse).norm();
+            if dist <= tolerance {
+                self.candidates.push(SnapPoint::new(
+                    ellipse.center,
+                    SnapType::Center,
+                    Some(entity_id),
+                    dist,
+                ));
+            }
+        }
+
+        // 端点（椭圆弧的端点）
+        if !ellipse.is_full() && enabled.is_enabled(SnapType::Endpoint) {
+            let start = ellipse.start_point();
+            let dist_start = (start - mouse).norm();
+            if dist_start <= tolerance {
+                self.candidates.push(SnapPoint::new(
+                    start,
+                    SnapType::Endpoint,
+                    Some(entity_id),
+                    dist_start,
+                ));
+            }
+
+            let end = ellipse.end_point();
+            let dist_end = (end - mouse).norm();
+            if dist_end <= tolerance {
+                self.candidates.push(SnapPoint::new(
+                    end,
+                    SnapType::Endpoint,
+                    Some(entity_id),
+                    dist_end,
+                ));
+            }
+        }
+
+        // 象限点（长轴和短轴的端点）
+        if enabled.is_enabled(SnapType::Quadrant) {
+            let major_end1 = ellipse.center + ellipse.major_axis;
+            let major_end2 = ellipse.center - ellipse.major_axis;
+            let minor_end1 = ellipse.center + ellipse.minor_axis();
+            let minor_end2 = ellipse.center - ellipse.minor_axis();
+
+            for point in [major_end1, major_end2, minor_end1, minor_end2] {
+                let dist = (point - mouse).norm();
+                if dist <= tolerance {
+                    self.candidates.push(SnapPoint::new(
+                        point,
+                        SnapType::Quadrant,
+                        Some(entity_id),
+                        dist,
+                    ));
+                }
+            }
+        }
+
+        // 最近点
+        if enabled.is_enabled(SnapType::Nearest) {
+            // 使用采样点找最近点
+            let samples = ellipse.sample_points(64);
+            let mut min_dist = f64::MAX;
+            let mut nearest = mouse;
+            
+            for pt in samples {
+                let dist = (pt - mouse).norm();
+                if dist < min_dist {
+                    min_dist = dist;
+                    nearest = pt;
+                }
+            }
+            
+            if min_dist <= tolerance {
+                self.candidates.push(SnapPoint::new(
+                    nearest,
+                    SnapType::Nearest,
+                    Some(entity_id),
+                    min_dist,
+                ));
+            }
+        }
+    }
+
+    /// 样条曲线的捕捉点
+    fn collect_spline_snap_points(
+        &mut self,
+        spline: &Spline,
+        entity_id: EntityId,
+        mouse: Point2,
+        tolerance: f64,
+    ) {
+        let enabled = &self.config.enabled_types;
+
+        // 控制点（作为端点）
+        if enabled.is_enabled(SnapType::Endpoint) {
+            for &pt in &spline.control_points {
+                let dist = (pt - mouse).norm();
+                if dist <= tolerance {
+                    self.candidates.push(SnapPoint::new(
+                        pt,
+                        SnapType::Endpoint,
+                        Some(entity_id),
+                        dist,
+                    ));
+                }
+            }
+        }
+
+        // 拟合点
+        if enabled.is_enabled(SnapType::Endpoint) {
+            for &pt in &spline.fit_points {
+                let dist = (pt - mouse).norm();
+                if dist <= tolerance {
+                    self.candidates.push(SnapPoint::new(
+                        pt,
+                        SnapType::Endpoint,
+                        Some(entity_id),
+                        dist,
+                    ));
+                }
+            }
+        }
+
+        // 最近点
+        if enabled.is_enabled(SnapType::Nearest) {
+            let samples = spline.sample_points(64);
+            let mut min_dist = f64::MAX;
+            let mut nearest = mouse;
+            
+            for pt in samples {
+                let dist = (pt - mouse).norm();
+                if dist < min_dist {
+                    min_dist = dist;
+                    nearest = pt;
+                }
+            }
+            
+            if min_dist <= tolerance {
+                self.candidates.push(SnapPoint::new(
+                    nearest,
+                    SnapType::Nearest,
+                    Some(entity_id),
+                    min_dist,
+                ));
+            }
+        }
+    }
+
+    /// 引线的捕捉点
+    fn collect_leader_snap_points(
+        &mut self,
+        leader: &Leader,
+        entity_id: EntityId,
+        mouse: Point2,
+        tolerance: f64,
+    ) {
+        let enabled = &self.config.enabled_types;
+
+        // 顶点（端点）
+        if enabled.is_enabled(SnapType::Endpoint) {
+            for &pt in &leader.vertices {
+                let dist = (pt - mouse).norm();
+                if dist <= tolerance {
+                    self.candidates.push(SnapPoint::new(
+                        pt,
+                        SnapType::Endpoint,
+                        Some(entity_id),
+                        dist,
+                    ));
+                }
+            }
+        }
+
+        // 线段中点
+        if enabled.is_enabled(SnapType::Midpoint) {
+            for i in 0..leader.vertices.len().saturating_sub(1) {
+                let midpoint = Point2::new(
+                    (leader.vertices[i].x + leader.vertices[i + 1].x) / 2.0,
+                    (leader.vertices[i].y + leader.vertices[i + 1].y) / 2.0,
+                );
+                let dist = (midpoint - mouse).norm();
+                if dist <= tolerance {
+                    self.candidates.push(SnapPoint::new(
+                        midpoint,
+                        SnapType::Midpoint,
+                        Some(entity_id),
+                        dist,
+                    ));
                 }
             }
         }

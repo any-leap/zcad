@@ -22,9 +22,12 @@
 //! ```
 
 pub mod async_core;
+pub mod block;
 pub mod buffer;
+pub mod dimstyle;
 pub mod entity;
 pub mod geometry;
+pub mod grip;
 pub mod history;
 pub mod input_parser;
 pub mod layer;
@@ -35,14 +38,16 @@ pub mod snap;
 pub mod solver;
 pub mod spatial;
 pub mod transform;
+pub mod units;
 pub mod version_control;
 
 pub mod prelude {
     //! 常用类型的便捷导入
     pub use crate::async_core::{AsyncCore, Message, MessageBus};
+    pub use crate::block::{Block, BlockId, BlockReference, BlockTable};
     pub use crate::buffer::{DoubleBufferedEntities, EntityBuffer};
     pub use crate::entity::{Entity, EntityId};
-    pub use crate::geometry::{Arc, Circle, Geometry, Line, Point, Polyline, Text, TextAlignment};
+    pub use crate::geometry::{Arc, Circle, Ellipse, Geometry, Hatch, Leader, Line, Point, Polyline, Spline, Text, TextAlignment};
     pub use crate::history::{HistoryTree, Operation, OperationId};
     pub use crate::layer::Layer;
     pub use crate::input_parser::{InputParser, InputValue, ParseError};
@@ -53,5 +58,8 @@ pub mod prelude {
     pub use crate::solver::NewtonSolver;
     pub use crate::transform::Transform2D;
     pub use crate::version_control::{VersionControl, Commit, Branch};
+    pub use crate::grip::{Grip, GripType, GripData, get_grips_for_geometry, update_geometry_by_grip};
+    pub use crate::units::{Unit, LinearFormat, AngleUnit, AngleFormat, convert, format_linear, format_angle};
+    pub use crate::dimstyle::{DimStyle, DimStyleManager, ArrowType, DimTextAlignment, DimTextVertical};
 }
 

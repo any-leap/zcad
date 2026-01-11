@@ -288,6 +288,18 @@ impl Renderer {
                 self.draw_text_marker(text, color_arr);
             }
             Geometry::Dimension(_) => {}
+            Geometry::Ellipse(ellipse) => {
+                self.draw_ellipse(ellipse, color_arr);
+            }
+            Geometry::Spline(spline) => {
+                self.draw_spline(spline, color_arr);
+            }
+            Geometry::Hatch(hatch) => {
+                self.draw_hatch(hatch, color_arr);
+            }
+            Geometry::Leader(leader) => {
+                self.draw_leader(leader, color_arr);
+            }
         }
     }
 
@@ -430,6 +442,94 @@ impl Renderer {
 
             self.line_vertices.push(LineVertex::new(pt1.x as f32, pt1.y as f32, color));
             self.line_vertices.push(LineVertex::new(pt2.x as f32, pt2.y as f32, color));
+        }
+    }
+
+    fn draw_ellipse(&mut self, ellipse: &zcad_core::geometry::Ellipse, color: [f32; 4]) {
+        let points = ellipse.sample_points(64);
+        for i in 0..points.len().saturating_sub(1) {
+            self.line_vertices.push(LineVertex::new(
+                points[i].x as f32,
+                points[i].y as f32,
+                color,
+            ));
+            self.line_vertices.push(LineVertex::new(
+                points[i + 1].x as f32,
+                points[i + 1].y as f32,
+                color,
+            ));
+        }
+    }
+
+    fn draw_spline(&mut self, spline: &zcad_core::geometry::Spline, color: [f32; 4]) {
+        let points = spline.sample_points(64);
+        for i in 0..points.len().saturating_sub(1) {
+            self.line_vertices.push(LineVertex::new(
+                points[i].x as f32,
+                points[i].y as f32,
+                color,
+            ));
+            self.line_vertices.push(LineVertex::new(
+                points[i + 1].x as f32,
+                points[i + 1].y as f32,
+                color,
+            ));
+        }
+    }
+
+    fn draw_hatch(&mut self, hatch: &zcad_core::geometry::Hatch, color: [f32; 4]) {
+        // 绘制填充边界
+        for boundary in &hatch.boundaries {
+            for elem in &boundary.elements {
+                match elem {
+                    zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                        self.draw_line(line, color);
+                    }
+                    zcad_core::geometry::HatchBoundaryElement::Arc(arc) => {
+                        self.draw_arc(arc, color);
+                    }
+                    zcad_core::geometry::HatchBoundaryElement::Ellipse(ellipse) => {
+                        self.draw_ellipse(ellipse, color);
+                    }
+                    zcad_core::geometry::HatchBoundaryElement::Spline(spline) => {
+                        self.draw_spline(spline, color);
+                    }
+                }
+            }
+        }
+        // TODO: 绘制填充图案
+    }
+
+    fn draw_leader(&mut self, leader: &zcad_core::geometry::Leader, color: [f32; 4]) {
+        // 绘制引线线段
+        for i in 0..leader.vertices.len().saturating_sub(1) {
+            self.line_vertices.push(LineVertex::new(
+                leader.vertices[i].x as f32,
+                leader.vertices[i].y as f32,
+                color,
+            ));
+            self.line_vertices.push(LineVertex::new(
+                leader.vertices[i + 1].x as f32,
+                leader.vertices[i + 1].y as f32,
+                color,
+            ));
+        }
+
+        // 绘制箭头
+        if leader.vertices.len() >= 2 {
+            let arrow_pt = leader.vertices[0];
+            let next_pt = leader.vertices[1];
+            let dir = (arrow_pt - next_pt).normalize();
+            let perp = zcad_core::math::Vector2::new(-dir.y, dir.x);
+            let arrow_size = leader.arrow_size;
+
+            let p1 = arrow_pt - dir * arrow_size + perp * arrow_size * 0.3;
+            let p2 = arrow_pt - dir * arrow_size - perp * arrow_size * 0.3;
+
+            self.line_vertices.push(LineVertex::new(arrow_pt.x as f32, arrow_pt.y as f32, color));
+            self.line_vertices.push(LineVertex::new(p1.x as f32, p1.y as f32, color));
+            self.line_vertices.push(LineVertex::new(arrow_pt.x as f32, arrow_pt.y as f32, color));
+            self.line_vertices.push(LineVertex::new(p2.x as f32, p2.y as f32, color));
         }
     }
 
@@ -690,6 +790,40 @@ impl Renderer {
                 vertices.push(LineVertex::new(x, y + size, color_arr));
             }
             Geometry::Dimension(_) => {}
+            Geometry::Ellipse(ellipse) => {
+                let points = ellipse.sample_points(64);
+                for i in 0..points.len().saturating_sub(1) {
+                    vertices.push(LineVertex::new(points[i].x as f32, points[i].y as f32, color_arr));
+                    vertices.push(LineVertex::new(points[i + 1].x as f32, points[i + 1].y as f32, color_arr));
+                }
+            }
+            Geometry::Spline(spline) => {
+                let points = spline.sample_points(64);
+                for i in 0..points.len().saturating_sub(1) {
+                    vertices.push(LineVertex::new(points[i].x as f32, points[i].y as f32, color_arr));
+                    vertices.push(LineVertex::new(points[i + 1].x as f32, points[i + 1].y as f32, color_arr));
+                }
+            }
+            Geometry::Hatch(hatch) => {
+                // 只绘制边界
+                for boundary in &hatch.boundaries {
+                    for elem in &boundary.elements {
+                        match elem {
+                            zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                                vertices.push(LineVertex::new(line.start.x as f32, line.start.y as f32, color_arr));
+                                vertices.push(LineVertex::new(line.end.x as f32, line.end.y as f32, color_arr));
+                            }
+                            _ => {} // 其他类型简化处理
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(leader) => {
+                for i in 0..leader.vertices.len().saturating_sub(1) {
+                    vertices.push(LineVertex::new(leader.vertices[i].x as f32, leader.vertices[i].y as f32, color_arr));
+                    vertices.push(LineVertex::new(leader.vertices[i + 1].x as f32, leader.vertices[i + 1].y as f32, color_arr));
+                }
+            }
         }
     }
 }

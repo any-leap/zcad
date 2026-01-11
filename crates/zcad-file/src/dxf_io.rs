@@ -6,8 +6,11 @@ use crate::document::Document;
 use crate::error::FileError;
 use std::path::Path;
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline, PolylineVertex, Text};
-use zcad_core::math::Point2;
+use zcad_core::geometry::{
+    Arc, Circle, Ellipse, Geometry, Leader, Line, Polyline, PolylineVertex, 
+    Spline, Text,
+};
+use zcad_core::math::{Point2, Vector2};
 use zcad_core::properties::{Color, Properties};
 
 /// 从DXF文件导入
@@ -101,6 +104,51 @@ fn convert_dxf_entity(entity: &dxf::entities::Entity) -> Option<Entity> {
         dxf::entities::EntityType::ModelPoint(point) => {
             let position = Point2::new(point.location.x, point.location.y);
             Geometry::Point(zcad_core::geometry::Point::from_point2(position))
+        }
+
+        dxf::entities::EntityType::Ellipse(ellipse) => {
+            let center = Point2::new(ellipse.center.x, ellipse.center.y);
+            let major_axis = Vector2::new(ellipse.major_axis.x, ellipse.major_axis.y);
+            let ratio = ellipse.minor_axis_ratio;
+            let start_param = ellipse.start_parameter;
+            let end_param = ellipse.end_parameter;
+            Geometry::Ellipse(Ellipse::arc(center, major_axis, ratio, start_param, end_param))
+        }
+
+        dxf::entities::EntityType::Spline(spline) => {
+            let degree = spline.degree_of_curve as u8;
+            let control_points: Vec<Point2> = spline
+                .control_points
+                .iter()
+                .map(|p| Point2::new(p.x, p.y))
+                .collect();
+            let knots: Vec<f64> = spline.knot_values.clone();
+            let fit_points: Vec<Point2> = spline
+                .fit_points
+                .iter()
+                .map(|p| Point2::new(p.x, p.y))
+                .collect();
+            let closed = spline.is_closed();
+            
+            let mut zcad_spline = Spline::new(degree);
+            zcad_spline.control_points = control_points;
+            zcad_spline.knots = knots;
+            zcad_spline.fit_points = fit_points;
+            zcad_spline.closed = closed;
+            
+            Geometry::Spline(zcad_spline)
+        }
+
+        dxf::entities::EntityType::Leader(leader) => {
+            let vertices: Vec<Point2> = leader
+                .vertices
+                .iter()
+                .map(|p| Point2::new(p.x, p.y))
+                .collect();
+            
+            let zcad_leader = Leader::new(vertices);
+            
+            Geometry::Leader(zcad_leader)
         }
 
         dxf::entities::EntityType::RotatedDimension(dim) => {
@@ -354,6 +402,52 @@ fn convert_to_dxf_entity(entity: &Entity) -> Option<dxf::entities::Entity> {
                     dxf::entities::EntityType::RotatedDimension(dxf_dim)
                 }
             }
+        }
+
+        Geometry::Ellipse(ellipse) => {
+            let mut dxf_ellipse = dxf::entities::Ellipse::default();
+            dxf_ellipse.center = dxf::Point::new(ellipse.center.x, ellipse.center.y, 0.0);
+            dxf_ellipse.major_axis = dxf::Vector::new(ellipse.major_axis.x, ellipse.major_axis.y, 0.0);
+            dxf_ellipse.minor_axis_ratio = ellipse.ratio;
+            dxf_ellipse.start_parameter = ellipse.start_param;
+            dxf_ellipse.end_parameter = ellipse.end_param;
+            dxf::entities::EntityType::Ellipse(dxf_ellipse)
+        }
+
+        Geometry::Spline(spline) => {
+            let mut dxf_spline = dxf::entities::Spline::default();
+            dxf_spline.degree_of_curve = spline.degree as i32;
+            dxf_spline.control_points = spline
+                .control_points
+                .iter()
+                .map(|p| dxf::Point::new(p.x, p.y, 0.0))
+                .collect();
+            dxf_spline.knot_values = spline.knots.clone();
+            dxf_spline.fit_points = spline
+                .fit_points
+                .iter()
+                .map(|p| dxf::Point::new(p.x, p.y, 0.0))
+                .collect();
+            if spline.closed {
+                dxf_spline.flags |= 1; // Closed spline
+            }
+            dxf::entities::EntityType::Spline(dxf_spline)
+        }
+
+        Geometry::Hatch(_hatch) => {
+            // TODO: 实现完整的 Hatch 导出
+            // 当前跳过填充，因为 DXF Hatch 结构复杂
+            return None;
+        }
+
+        Geometry::Leader(leader) => {
+            let mut dxf_leader = dxf::entities::Leader::default();
+            dxf_leader.vertices = leader
+                .vertices
+                .iter()
+                .map(|p| dxf::Point::new(p.x, p.y, 0.0))
+                .collect();
+            dxf::entities::EntityType::Leader(dxf_leader)
         }
     };
 

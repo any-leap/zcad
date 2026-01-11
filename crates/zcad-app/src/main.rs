@@ -227,6 +227,61 @@ impl ZcadApp {
             Geometry::Dimension(dim) => {
                 self.draw_dimension(painter, rect, dim, color);
             }
+            Geometry::Ellipse(ellipse) => {
+                // 用线段近似椭圆
+                let points = ellipse.sample_points(64);
+                for i in 0..points.len().saturating_sub(1) {
+                    let s1 = self.world_to_screen(points[i], rect);
+                    let s2 = self.world_to_screen(points[i + 1], rect);
+                    painter.line_segment([s1, s2], stroke);
+                }
+            }
+            Geometry::Spline(spline) => {
+                // 用线段近似样条
+                let points = spline.sample_points(64);
+                for i in 0..points.len().saturating_sub(1) {
+                    let s1 = self.world_to_screen(points[i], rect);
+                    let s2 = self.world_to_screen(points[i + 1], rect);
+                    painter.line_segment([s1, s2], stroke);
+                }
+            }
+            Geometry::Hatch(hatch) => {
+                // 只绘制边界
+                for boundary in &hatch.boundaries {
+                    for elem in &boundary.elements {
+                        match elem {
+                            zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                                let start = self.world_to_screen(line.start, rect);
+                                let end = self.world_to_screen(line.end, rect);
+                                painter.line_segment([start, end], stroke);
+                            }
+                            _ => {} // 其他类型简化处理
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(leader) => {
+                // 绘制引线线段
+                for i in 0..leader.vertices.len().saturating_sub(1) {
+                    let s1 = self.world_to_screen(leader.vertices[i], rect);
+                    let s2 = self.world_to_screen(leader.vertices[i + 1], rect);
+                    painter.line_segment([s1, s2], stroke);
+                }
+                // 箭头
+                if leader.vertices.len() >= 2 {
+                    let arrow_pt = self.world_to_screen(leader.vertices[0], rect);
+                    let next_pt = self.world_to_screen(leader.vertices[1], rect);
+                    let dir = egui::Vec2::new(arrow_pt.x - next_pt.x, arrow_pt.y - next_pt.y).normalized();
+                    let perp = egui::Vec2::new(-dir.y, dir.x);
+                    let arrow_size = (leader.arrow_size * self.camera_zoom) as f32;
+                    
+                    let p1 = arrow_pt - dir * arrow_size + perp * arrow_size * 0.3;
+                    let p2 = arrow_pt - dir * arrow_size - perp * arrow_size * 0.3;
+                    
+                    painter.line_segment([arrow_pt, p1], stroke);
+                    painter.line_segment([arrow_pt, p2], stroke);
+                }
+            }
         }
     }
 
@@ -377,6 +432,106 @@ impl ZcadApp {
                  }
                  
                  self.draw_dimension_text(painter, rect, text_pos, &text_content, dim.text_height, stroke_color, angle as f32);
+            }
+            zcad_core::geometry::DimensionType::Angular => {
+                // 角度标注：p1=顶点, p2=第一条边上的点, line_location=第二条边上的点
+                let vertex = dim.definition_point1;
+                let p1 = dim.definition_point2;
+                let p2 = dim.line_location;
+                
+                let vertex_s = self.world_to_screen(vertex, rect);
+                let p1_s = self.world_to_screen(p1, rect);
+                let p2_s = self.world_to_screen(p2, rect);
+                
+                // 绘制两条边
+                painter.line_segment([vertex_s, p1_s], stroke);
+                painter.line_segment([vertex_s, p2_s], stroke);
+                
+                // 计算角度并绘制弧线
+                let dir1 = (p1 - vertex).normalize();
+                let dir2 = (p2 - vertex).normalize();
+                let angle1 = dir1.y.atan2(dir1.x);
+                let angle2 = dir2.y.atan2(dir2.x);
+                
+                // 计算弧的半径 (取两点到顶点距离的较小值的一半)
+                let r1 = (p1 - vertex).norm();
+                let r2 = (p2 - vertex).norm();
+                let arc_radius = (r1.min(r2) * 0.5).max(5.0 / self.camera_zoom);
+                
+                // 绘制角度弧（使用多段线近似）
+                let start_angle = angle1.min(angle2);
+                let end_angle = angle1.max(angle2);
+                let arc_steps = 20;
+                let mut prev_point = None;
+                for i in 0..=arc_steps {
+                    let t = i as f64 / arc_steps as f64;
+                    let angle = start_angle + (end_angle - start_angle) * t;
+                    let point = vertex + zcad_core::math::Vector2::new(angle.cos(), angle.sin()) * arc_radius;
+                    let point_s = self.world_to_screen(point, rect);
+                    if let Some(prev) = prev_point {
+                        painter.line_segment([prev, point_s], stroke);
+                    }
+                    prev_point = Some(point_s);
+                }
+                
+                // 绘制文本
+                let text_content = dim.display_text();
+                let text_pos = dim.get_text_position();
+                self.draw_dimension_text(painter, rect, text_pos, &text_content, dim.text_height, stroke_color, 0.0);
+            }
+            zcad_core::geometry::DimensionType::ArcLength => {
+                // 弧长标注：p1=圆心, p2=弧起点, line_location=弧终点
+                let center = dim.definition_point1;
+                let arc_start = dim.definition_point2;
+                let arc_end = dim.line_location;
+                
+                let radius = (arc_start - center).norm();
+                let start_angle = (arc_start - center).y.atan2((arc_start - center).x);
+                let end_angle = (arc_end - center).y.atan2((arc_end - center).x);
+                
+                // 绘制弧线
+                let arc_steps = 30;
+                let mut prev_point = None;
+                for i in 0..=arc_steps {
+                    let t = i as f64 / arc_steps as f64;
+                    let angle = start_angle + (end_angle - start_angle) * t;
+                    let point = center + zcad_core::math::Vector2::new(angle.cos(), angle.sin()) * radius;
+                    let point_s = self.world_to_screen(point, rect);
+                    if let Some(prev) = prev_point {
+                        painter.line_segment([prev, point_s], stroke);
+                    }
+                    prev_point = Some(point_s);
+                }
+                
+                // 绘制箭头
+                let arc_start_s = self.world_to_screen(arc_start, rect);
+                let arc_end_s = self.world_to_screen(arc_end, rect);
+                self.draw_arrow(painter, self.world_to_screen(center, rect), arc_start_s, stroke);
+                self.draw_arrow(painter, self.world_to_screen(center, rect), arc_end_s, stroke);
+                
+                // 绘制文本
+                let text_content = dim.display_text();
+                let text_pos = dim.get_text_position();
+                self.draw_dimension_text(painter, rect, text_pos, &text_content, dim.text_height, stroke_color, 0.0);
+            }
+            zcad_core::geometry::DimensionType::Ordinate => {
+                // 坐标标注：显示 X 或 Y 坐标值
+                let point = dim.definition_point1;
+                let leader_end = dim.line_location;
+                
+                let point_s = self.world_to_screen(point, rect);
+                let leader_end_s = self.world_to_screen(leader_end, rect);
+                
+                // 绘制引线
+                painter.line_segment([point_s, leader_end_s], stroke);
+                
+                // 绘制点标记
+                painter.circle_filled(point_s, 2.0, stroke_color);
+                
+                // 绘制文本
+                let text_content = dim.display_text();
+                let text_pos = dim.get_text_position();
+                self.draw_dimension_text(painter, rect, text_pos, &text_content, dim.text_height, stroke_color, 0.0);
             }
         }
     }
@@ -974,6 +1129,45 @@ impl ZcadApp {
                 d.definition_point2 = d.definition_point2 + offset;
                 d.line_location = d.line_location + offset;
             }
+            Geometry::Ellipse(e) => {
+                e.center = e.center + offset;
+            }
+            Geometry::Spline(s) => {
+                for pt in &mut s.control_points {
+                    *pt = *pt + offset;
+                }
+                for pt in &mut s.fit_points {
+                    *pt = *pt + offset;
+                }
+            }
+            Geometry::Hatch(h) => {
+                for boundary in &mut h.boundaries {
+                    for elem in &mut boundary.elements {
+                        match elem {
+                            zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                                line.start = line.start + offset;
+                                line.end = line.end + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Arc(arc) => {
+                                arc.center = arc.center + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Ellipse(ellipse) => {
+                                ellipse.center = ellipse.center + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Spline(spline) => {
+                                for pt in &mut spline.control_points {
+                                    *pt = *pt + offset;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(l) => {
+                for pt in &mut l.vertices {
+                    *pt = *pt + offset;
+                }
+            }
         }
     }
 
@@ -1523,6 +1717,45 @@ impl ZcadApp {
                 d.definition_point2 = d.definition_point2 + offset;
                 d.line_location = d.line_location + offset;
             }
+            Geometry::Ellipse(e) => {
+                e.center = e.center + offset;
+            }
+            Geometry::Spline(s) => {
+                for pt in &mut s.control_points {
+                    *pt = *pt + offset;
+                }
+                for pt in &mut s.fit_points {
+                    *pt = *pt + offset;
+                }
+            }
+            Geometry::Hatch(h) => {
+                for boundary in &mut h.boundaries {
+                    for elem in &mut boundary.elements {
+                        match elem {
+                            zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                                line.start = line.start + offset;
+                                line.end = line.end + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Arc(arc) => {
+                                arc.center = arc.center + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Ellipse(ellipse) => {
+                                ellipse.center = ellipse.center + offset;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Spline(spline) => {
+                                for pt in &mut spline.control_points {
+                                    *pt = *pt + offset;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(l) => {
+                for pt in &mut l.vertices {
+                    *pt = *pt + offset;
+                }
+            }
         }
     }
 
@@ -1568,6 +1801,57 @@ impl ZcadApp {
                 d.line_location = transform.transform_point(&d.line_location);
                 let (sx, sy) = transform.scale_component();
                 d.text_height *= (sx + sy) / 2.0;
+            }
+            Geometry::Ellipse(e) => {
+                e.center = transform.transform_point(&e.center);
+                let (sx, sy) = transform.scale_component();
+                let rotation = transform.rotation_angle();
+                // 变换长轴
+                let rotated_axis = zcad_core::math::Vector2::new(
+                    e.major_axis.x * rotation.cos() - e.major_axis.y * rotation.sin(),
+                    e.major_axis.x * rotation.sin() + e.major_axis.y * rotation.cos(),
+                );
+                e.major_axis = rotated_axis * (sx + sy) / 2.0;
+            }
+            Geometry::Spline(s) => {
+                for pt in &mut s.control_points {
+                    *pt = transform.transform_point(pt);
+                }
+                for pt in &mut s.fit_points {
+                    *pt = transform.transform_point(pt);
+                }
+            }
+            Geometry::Hatch(h) => {
+                let rotation = transform.rotation_angle();
+                h.angle += rotation;
+                for boundary in &mut h.boundaries {
+                    for elem in &mut boundary.elements {
+                        match elem {
+                            zcad_core::geometry::HatchBoundaryElement::Line(line) => {
+                                line.start = transform.transform_point(&line.start);
+                                line.end = transform.transform_point(&line.end);
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Arc(arc) => {
+                                arc.center = transform.transform_point(&arc.center);
+                                let (sx, sy) = transform.scale_component();
+                                arc.radius *= (sx + sy) / 2.0;
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Ellipse(ellipse) => {
+                                ellipse.center = transform.transform_point(&ellipse.center);
+                            }
+                            zcad_core::geometry::HatchBoundaryElement::Spline(spline) => {
+                                for pt in &mut spline.control_points {
+                                    *pt = transform.transform_point(pt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(l) => {
+                for pt in &mut l.vertices {
+                    *pt = transform.transform_point(pt);
+                }
             }
         }
     }

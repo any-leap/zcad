@@ -9,6 +9,8 @@
 //! - 文本 (Text)
 //! - 椭圆 (Ellipse)
 //! - 样条曲线 (Spline)
+//! - 填充 (Hatch)
+//! - 引线 (Leader)
 
 use crate::math::{BoundingBox2, Point2, Vector2, EPSILON};
 use serde::{Deserialize, Serialize};
@@ -23,10 +25,10 @@ pub enum Geometry {
     Polyline(Polyline),
     Text(Text),
     Dimension(Dimension),
-    // 未来扩展
-    // Ellipse(Ellipse),
-    // Spline(Spline),
-    // Hatch(Hatch),
+    Ellipse(Ellipse),
+    Spline(Spline),
+    Hatch(Hatch),
+    Leader(Leader),
 }
 
 impl Geometry {
@@ -40,6 +42,10 @@ impl Geometry {
             Geometry::Polyline(pl) => pl.bounding_box(),
             Geometry::Text(t) => t.bounding_box(),
             Geometry::Dimension(d) => d.bounding_box(),
+            Geometry::Ellipse(e) => e.bounding_box(),
+            Geometry::Spline(s) => s.bounding_box(),
+            Geometry::Hatch(h) => h.bounding_box(),
+            Geometry::Leader(l) => l.bounding_box(),
         }
     }
 
@@ -53,6 +59,10 @@ impl Geometry {
             Geometry::Polyline(_) => "Polyline",
             Geometry::Text(_) => "Text",
             Geometry::Dimension(_) => "Dimension",
+            Geometry::Ellipse(_) => "Ellipse",
+            Geometry::Spline(_) => "Spline",
+            Geometry::Hatch(_) => "Hatch",
+            Geometry::Leader(_) => "Leader",
         }
     }
 
@@ -66,6 +76,10 @@ impl Geometry {
             Geometry::Polyline(pl) => pl.distance_to_point(point) <= tolerance,
             Geometry::Text(t) => t.contains_point(point, tolerance),
             Geometry::Dimension(d) => d.contains_point(point, tolerance),
+            Geometry::Ellipse(e) => e.distance_to_point(point) <= tolerance,
+            Geometry::Spline(s) => s.distance_to_point(point) <= tolerance,
+            Geometry::Hatch(h) => h.contains_point(point, tolerance),
+            Geometry::Leader(l) => l.distance_to_point(point) <= tolerance,
         }
     }
 }
@@ -587,6 +601,12 @@ pub enum DimensionType {
     Radius,
     /// 直径标注
     Diameter,
+    /// 角度标注
+    Angular,
+    /// 弧长标注
+    ArcLength,
+    /// 坐标标注
+    Ordinate,
 }
 
 /// 尺寸标注
@@ -647,14 +667,20 @@ impl Dimension {
                 
                 self.definition_point1 + (self.definition_point2 - self.definition_point1) * 0.5 + offset_vec
             }
-            DimensionType::Radius => {
+            DimensionType::Radius | DimensionType::Diameter => {
                 // 默认位置就是 line_location (用户点击的位置)
                 self.line_location
             }
-            DimensionType::Diameter => {
-                // 默认位置就是 line_location
-                // 但如果是自动生成的，可能在圆心
-                // 这里我们假设 Diameter 的 line_location 就是文本位置
+            DimensionType::Angular | DimensionType::ArcLength => {
+                // 角度标注：文本位于角平分线上
+                let v1 = (self.definition_point2 - self.definition_point1).normalize();
+                let v2 = (self.line_location - self.definition_point1).normalize();
+                let bisector = (v1 + v2).normalize();
+                let radius = (self.definition_point2 - self.definition_point1).norm() * 0.6;
+                self.definition_point1 + bisector * radius
+            }
+            DimensionType::Ordinate => {
+                // 坐标标注：文本位于 line_location
                 self.line_location
             }
         }
@@ -688,6 +714,33 @@ impl Dimension {
                 // 对于直径标注，p1是圆心，p2是圆上一点，测量值为半径 * 2
                 (self.definition_point2 - self.definition_point1).norm() * 2.0
             }
+            DimensionType::Angular => {
+                // 角度标注：p1 是顶点，p2 是第一条边上的点，line_location 是第二条边上的点
+                let v1 = self.definition_point2 - self.definition_point1;
+                let v2 = self.line_location - self.definition_point1;
+                let dot = v1.x * v2.x + v1.y * v2.y;
+                let cross = v1.x * v2.y - v1.y * v2.x;
+                cross.atan2(dot).abs().to_degrees()
+            }
+            DimensionType::ArcLength => {
+                // 弧长标注：p1 是圆心，p2 是起点，line_location 是终点
+                let radius = (self.definition_point2 - self.definition_point1).norm();
+                let v1 = self.definition_point2 - self.definition_point1;
+                let v2 = self.line_location - self.definition_point1;
+                let angle = (v1.x * v2.y - v1.y * v2.x).atan2(v1.x * v2.x + v1.y * v2.y).abs();
+                radius * angle
+            }
+            DimensionType::Ordinate => {
+                // 坐标标注：显示 x 或 y 坐标
+                // 根据 line_location 相对于 definition_point1 的位置决定
+                let dx = (self.line_location.x - self.definition_point1.x).abs();
+                let dy = (self.line_location.y - self.definition_point1.y).abs();
+                if dx > dy {
+                    self.definition_point1.x
+                } else {
+                    self.definition_point1.y
+                }
+            }
         }
     }
 
@@ -700,6 +753,9 @@ impl Dimension {
             match self.dim_type {
                 DimensionType::Radius => format!("R{:.2}", val),
                 DimensionType::Diameter => format!("%%C{:.2}", val), // %%C 是 CAD 中直径符号的转义
+                DimensionType::Angular => format!("{:.1}°", val),
+                DimensionType::ArcLength => format!("⌒{:.2}", val),
+                DimensionType::Ordinate => format!("{:.2}", val),
                 _ => format!("{:.2}", val),
             }
         }
@@ -792,6 +848,674 @@ impl Polyline {
         let end_angle = (v2.point.y - center.y).atan2(v2.point.x - center.x);
 
         Some(Arc::new(center, radius, start_angle, end_angle))
+    }
+}
+
+// ========== 椭圆 (Ellipse) ==========
+
+/// 椭圆
+/// 
+/// 支持完整椭圆和椭圆弧，使用 DXF 兼容的参数化方式：
+/// - 中心点 + 长轴端点（相对向量）+ 短轴比例
+/// - 起始/终止参数用于椭圆弧
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Ellipse {
+    /// 中心点
+    pub center: Point2,
+    /// 长轴端点（相对于中心的向量）
+    pub major_axis: Vector2,
+    /// 短轴与长轴的比例 (0.0 < ratio <= 1.0)
+    pub ratio: f64,
+    /// 起始参数（弧度，0.0 表示长轴正方向）
+    pub start_param: f64,
+    /// 终止参数（弧度，2π 表示完整椭圆）
+    pub end_param: f64,
+}
+
+impl Ellipse {
+    /// 创建完整椭圆
+    pub fn new(center: Point2, major_axis: Vector2, ratio: f64) -> Self {
+        Self {
+            center,
+            major_axis,
+            ratio: ratio.clamp(EPSILON, 1.0),
+            start_param: 0.0,
+            end_param: 2.0 * std::f64::consts::PI,
+        }
+    }
+
+    /// 创建椭圆弧
+    pub fn arc(center: Point2, major_axis: Vector2, ratio: f64, start_param: f64, end_param: f64) -> Self {
+        Self {
+            center,
+            major_axis,
+            ratio: ratio.clamp(EPSILON, 1.0),
+            start_param,
+            end_param,
+        }
+    }
+
+    /// 从轴长创建椭圆（水平长轴）
+    pub fn from_radii(center: Point2, major_radius: f64, minor_radius: f64) -> Self {
+        let ratio = minor_radius / major_radius;
+        Self::new(center, Vector2::new(major_radius, 0.0), ratio)
+    }
+
+    /// 获取长轴半径
+    pub fn major_radius(&self) -> f64 {
+        self.major_axis.norm()
+    }
+
+    /// 获取短轴半径
+    pub fn minor_radius(&self) -> f64 {
+        self.major_radius() * self.ratio
+    }
+
+    /// 获取长轴旋转角度（相对于X轴）
+    pub fn rotation(&self) -> f64 {
+        self.major_axis.y.atan2(self.major_axis.x)
+    }
+
+    /// 获取短轴方向向量（单位向量）
+    pub fn minor_axis_direction(&self) -> Vector2 {
+        let rot = self.rotation();
+        Vector2::new(-rot.sin(), rot.cos())
+    }
+
+    /// 获取短轴端点向量
+    pub fn minor_axis(&self) -> Vector2 {
+        self.minor_axis_direction() * self.minor_radius()
+    }
+
+    /// 是否是完整椭圆
+    pub fn is_full(&self) -> bool {
+        (self.end_param - self.start_param - 2.0 * std::f64::consts::PI).abs() < EPSILON
+    }
+
+    /// 获取椭圆上指定参数的点
+    /// 
+    /// 参数 t 是椭圆的参数化角度，不是真正的几何角度
+    pub fn point_at_param(&self, t: f64) -> Point2 {
+        let cos_t = t.cos();
+        let sin_t = t.sin();
+        let major_dir = self.major_axis / self.major_radius();
+        let minor_dir = self.minor_axis_direction();
+        
+        Point2::new(
+            self.center.x + self.major_radius() * cos_t * major_dir.x + self.minor_radius() * sin_t * minor_dir.x,
+            self.center.y + self.major_radius() * cos_t * major_dir.y + self.minor_radius() * sin_t * minor_dir.y,
+        )
+    }
+
+    /// 获取起点
+    pub fn start_point(&self) -> Point2 {
+        self.point_at_param(self.start_param)
+    }
+
+    /// 获取终点
+    pub fn end_point(&self) -> Point2 {
+        self.point_at_param(self.end_param)
+    }
+
+    /// 计算周长（近似值，使用 Ramanujan 公式）
+    pub fn circumference(&self) -> f64 {
+        let a = self.major_radius();
+        let b = self.minor_radius();
+        let h = ((a - b) / (a + b)).powi(2);
+        std::f64::consts::PI * (a + b) * (1.0 + 3.0 * h / (10.0 + (4.0 - 3.0 * h).sqrt()))
+    }
+
+    /// 计算面积
+    pub fn area(&self) -> f64 {
+        std::f64::consts::PI * self.major_radius() * self.minor_radius()
+    }
+
+    /// 计算点到椭圆的距离（近似值）
+    pub fn distance_to_point(&self, point: &Point2) -> f64 {
+        // 将点转换到椭圆的局部坐标系
+        let rot = self.rotation();
+        let cos_r = rot.cos();
+        let sin_r = rot.sin();
+        
+        let local_x = (point.x - self.center.x) * cos_r + (point.y - self.center.y) * sin_r;
+        let local_y = -(point.x - self.center.x) * sin_r + (point.y - self.center.y) * cos_r;
+        
+        // 使用迭代法找到最近点（Newton-Raphson）
+        let a = self.major_radius();
+        let b = self.minor_radius();
+        
+        // 初始猜测：使用角度
+        let mut t = local_y.atan2(local_x);
+        
+        for _ in 0..10 {
+            let cos_t = t.cos();
+            let sin_t = t.sin();
+            
+            let ex = a * cos_t;
+            let ey = b * sin_t;
+            
+            let dx = local_x - ex;
+            let dy = local_y - ey;
+            
+            // 切线方向
+            let tx = -a * sin_t;
+            let ty = b * cos_t;
+            
+            // 投影
+            let dot = dx * tx + dy * ty;
+            let len_sq = tx * tx + ty * ty;
+            
+            if len_sq < EPSILON {
+                break;
+            }
+            
+            t += dot / len_sq;
+        }
+        
+        // 检查参数是否在椭圆弧范围内
+        if !self.is_full() {
+            // 归一化 t 到 [0, 2π)
+            let two_pi = 2.0 * std::f64::consts::PI;
+            let mut t_norm = t % two_pi;
+            if t_norm < 0.0 {
+                t_norm += two_pi;
+            }
+            
+            let mut start = self.start_param % two_pi;
+            if start < 0.0 {
+                start += two_pi;
+            }
+            let mut end = self.end_param % two_pi;
+            if end < 0.0 {
+                end += two_pi;
+            }
+            
+            let in_range = if start <= end {
+                t_norm >= start && t_norm <= end
+            } else {
+                t_norm >= start || t_norm <= end
+            };
+            
+            if !in_range {
+                // 返回到端点的最小距离
+                let d1 = (point - self.start_point()).norm();
+                let d2 = (point - self.end_point()).norm();
+                return d1.min(d2);
+            }
+        }
+        
+        let closest = Point2::new(
+            self.center.x + a * t.cos() * cos_r - b * t.sin() * sin_r,
+            self.center.y + a * t.cos() * sin_r + b * t.sin() * cos_r,
+        );
+        
+        (point - closest).norm()
+    }
+
+    /// 获取包围盒
+    pub fn bounding_box(&self) -> BoundingBox2 {
+        let rot = self.rotation();
+        let cos_r = rot.cos();
+        let sin_r = rot.sin();
+        let a = self.major_radius();
+        let b = self.minor_radius();
+        
+        // 椭圆在 x, y 方向的极值
+        let dx = (a * a * cos_r * cos_r + b * b * sin_r * sin_r).sqrt();
+        let dy = (a * a * sin_r * sin_r + b * b * cos_r * cos_r).sqrt();
+        
+        if self.is_full() {
+            BoundingBox2::new(
+                Point2::new(self.center.x - dx, self.center.y - dy),
+                Point2::new(self.center.x + dx, self.center.y + dy),
+            )
+        } else {
+            // 椭圆弧：采样点计算包围盒
+            let mut bbox = BoundingBox2::from_points([self.start_point(), self.end_point()]);
+            
+            let steps = 32;
+            let range = self.end_param - self.start_param;
+            for i in 0..=steps {
+                let t = self.start_param + range * (i as f64) / (steps as f64);
+                bbox.expand_to_include(&self.point_at_param(t));
+            }
+            
+            bbox
+        }
+    }
+
+    /// 获取椭圆上的采样点（用于渲染）
+    pub fn sample_points(&self, segments: usize) -> Vec<Point2> {
+        let mut points = Vec::with_capacity(segments + 1);
+        let range = self.end_param - self.start_param;
+        
+        for i in 0..=segments {
+            let t = self.start_param + range * (i as f64) / (segments as f64);
+            points.push(self.point_at_param(t));
+        }
+        
+        points
+    }
+}
+
+// ========== 样条曲线 (Spline) ==========
+
+/// 样条曲线类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SplineType {
+    /// B-样条 (默认)
+    #[default]
+    BSpline,
+    /// NURBS (有理B样条)
+    Nurbs,
+    /// 贝塞尔样条
+    Bezier,
+}
+
+/// 样条曲线
+/// 
+/// 支持 B-样条和 NURBS 曲线，使用 De Boor 算法求值
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Spline {
+    /// 样条类型
+    pub spline_type: SplineType,
+    /// 曲线阶数（通常为 3 或 4）
+    pub degree: u8,
+    /// 控制点
+    pub control_points: Vec<Point2>,
+    /// 节点向量（knot vector）
+    pub knots: Vec<f64>,
+    /// 权重（用于 NURBS，如果为空则默认全为 1）
+    pub weights: Vec<f64>,
+    /// 是否闭合
+    pub closed: bool,
+    /// 拟合点（用于样条拟合）
+    pub fit_points: Vec<Point2>,
+}
+
+impl Spline {
+    /// 创建一个空的 B-样条
+    pub fn new(degree: u8) -> Self {
+        Self {
+            spline_type: SplineType::BSpline,
+            degree,
+            control_points: Vec::new(),
+            knots: Vec::new(),
+            weights: Vec::new(),
+            closed: false,
+            fit_points: Vec::new(),
+        }
+    }
+
+    /// 从控制点创建 B-样条（自动生成均匀节点向量）
+    pub fn from_control_points(control_points: Vec<Point2>, degree: u8, closed: bool) -> Self {
+        let n = control_points.len();
+        let k = degree as usize;
+        
+        // 生成均匀节点向量
+        let num_knots = n + k + 1;
+        let mut knots = Vec::with_capacity(num_knots);
+        
+        for i in 0..num_knots {
+            if i < k {
+                knots.push(0.0);
+            } else if i >= n {
+                knots.push((n - k + 1) as f64);
+            } else {
+                knots.push((i - k + 1) as f64);
+            }
+        }
+        
+        Self {
+            spline_type: SplineType::BSpline,
+            degree,
+            control_points,
+            knots,
+            weights: Vec::new(),
+            closed,
+            fit_points: Vec::new(),
+        }
+    }
+
+    /// 使用 De Boor 算法计算样条曲线上的点
+    pub fn point_at_param(&self, t: f64) -> Point2 {
+        if self.control_points.is_empty() {
+            return Point2::origin();
+        }
+        
+        if self.control_points.len() == 1 {
+            return self.control_points[0];
+        }
+        
+        let n = self.control_points.len();
+        let k = self.degree as usize;
+        
+        // 找到 t 所在的区间
+        let mut span = k;
+        while span < n && self.knots.get(span + 1).map_or(false, |&k| k <= t) {
+            span += 1;
+        }
+        span = span.min(n - 1);
+        
+        // De Boor 算法
+        let mut d: Vec<Point2> = (0..=k)
+            .filter_map(|i| {
+                let idx = span.saturating_sub(k) + i;
+                self.control_points.get(idx).copied()
+            })
+            .collect();
+        
+        if d.len() <= k {
+            return self.control_points.last().copied().unwrap_or(Point2::origin());
+        }
+        
+        for r in 1..=k {
+            for j in (r..=k).rev() {
+                let idx = span.saturating_sub(k) + j;
+                let left = self.knots.get(idx).copied().unwrap_or(0.0);
+                let right = self.knots.get(idx + k + 1 - r).copied().unwrap_or(1.0);
+                
+                let denom = right - left;
+                if denom.abs() < EPSILON {
+                    continue;
+                }
+                
+                let alpha = (t - left) / denom;
+                let j_idx = j;
+                let j_prev = j - 1;
+                
+                if j_idx < d.len() && j_prev < d.len() {
+                    d[j_idx] = Point2::new(
+                        (1.0 - alpha) * d[j_prev].x + alpha * d[j_idx].x,
+                        (1.0 - alpha) * d[j_prev].y + alpha * d[j_idx].y,
+                    );
+                }
+            }
+        }
+        
+        d.get(k).copied().unwrap_or(Point2::origin())
+    }
+
+    /// 获取参数范围
+    pub fn param_range(&self) -> (f64, f64) {
+        let k = self.degree as usize;
+        let start = self.knots.get(k).copied().unwrap_or(0.0);
+        let end = self.knots.get(self.knots.len().saturating_sub(k + 1)).copied().unwrap_or(1.0);
+        (start, end)
+    }
+
+    /// 计算点到样条曲线的距离（近似值）
+    pub fn distance_to_point(&self, point: &Point2) -> f64 {
+        let samples = self.sample_points(64);
+        
+        let mut min_dist = f64::MAX;
+        for i in 0..samples.len().saturating_sub(1) {
+            let line = Line::new(samples[i], samples[i + 1]);
+            min_dist = min_dist.min(line.distance_to_point(point));
+        }
+        
+        min_dist
+    }
+
+    /// 获取包围盒
+    pub fn bounding_box(&self) -> BoundingBox2 {
+        if self.control_points.is_empty() {
+            return BoundingBox2::empty();
+        }
+        
+        // 使用控制点的包围盒（保守估计）
+        // 更精确的方法需要采样
+        let mut bbox = BoundingBox2::from_points(self.control_points.iter().copied());
+        
+        // 添加采样点以获得更精确的包围盒
+        for pt in self.sample_points(32) {
+            bbox.expand_to_include(&pt);
+        }
+        
+        bbox
+    }
+
+    /// 获取采样点（用于渲染）
+    pub fn sample_points(&self, segments: usize) -> Vec<Point2> {
+        let mut points = Vec::with_capacity(segments + 1);
+        let (start, end) = self.param_range();
+        
+        for i in 0..=segments {
+            let t = start + (end - start) * (i as f64) / (segments as f64);
+            points.push(self.point_at_param(t));
+        }
+        
+        points
+    }
+}
+
+// ========== 填充 (Hatch) ==========
+
+/// 填充边界类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HatchBoundaryElement {
+    /// 线段
+    Line(Line),
+    /// 圆弧
+    Arc(Arc),
+    /// 椭圆弧
+    Ellipse(Ellipse),
+    /// 样条
+    Spline(Spline),
+}
+
+/// 填充边界
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HatchBoundary {
+    /// 边界元素
+    pub elements: Vec<HatchBoundaryElement>,
+    /// 是否为外边界（false 表示孔洞）
+    pub is_outer: bool,
+}
+
+impl HatchBoundary {
+    pub fn new(elements: Vec<HatchBoundaryElement>, is_outer: bool) -> Self {
+        Self { elements, is_outer }
+    }
+
+    /// 获取边界的包围盒
+    pub fn bounding_box(&self) -> BoundingBox2 {
+        let mut bbox = BoundingBox2::empty();
+        for elem in &self.elements {
+            let elem_bbox = match elem {
+                HatchBoundaryElement::Line(l) => l.bounding_box(),
+                HatchBoundaryElement::Arc(a) => a.bounding_box(),
+                HatchBoundaryElement::Ellipse(e) => e.bounding_box(),
+                HatchBoundaryElement::Spline(s) => s.bounding_box(),
+            };
+            bbox = bbox.union(&elem_bbox);
+        }
+        bbox
+    }
+}
+
+/// 填充图案类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HatchPatternType {
+    /// 实心填充
+    Solid,
+    /// 预定义图案
+    Predefined(String),
+    /// 用户自定义图案
+    Custom {
+        /// 图案线定义
+        lines: Vec<HatchPatternLine>,
+    },
+}
+
+/// 填充图案线
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HatchPatternLine {
+    /// 角度（弧度）
+    pub angle: f64,
+    /// 起点
+    pub base_point: Point2,
+    /// 偏移（用于平行线）
+    pub offset: Vector2,
+    /// 虚线模式（正数表示实线，负数表示间隙）
+    pub dash_pattern: Vec<f64>,
+}
+
+/// 填充
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hatch {
+    /// 边界
+    pub boundaries: Vec<HatchBoundary>,
+    /// 图案类型
+    pub pattern_type: HatchPatternType,
+    /// 图案角度（弧度）
+    pub angle: f64,
+    /// 图案比例
+    pub scale: f64,
+}
+
+impl Hatch {
+    /// 创建实心填充
+    pub fn solid(boundaries: Vec<HatchBoundary>) -> Self {
+        Self {
+            boundaries,
+            pattern_type: HatchPatternType::Solid,
+            angle: 0.0,
+            scale: 1.0,
+        }
+    }
+
+    /// 创建图案填充
+    pub fn pattern(boundaries: Vec<HatchBoundary>, pattern_name: &str, angle: f64, scale: f64) -> Self {
+        Self {
+            boundaries,
+            pattern_type: HatchPatternType::Predefined(pattern_name.to_string()),
+            angle,
+            scale,
+        }
+    }
+
+    /// 获取包围盒
+    pub fn bounding_box(&self) -> BoundingBox2 {
+        let mut bbox = BoundingBox2::empty();
+        for boundary in &self.boundaries {
+            bbox = bbox.union(&boundary.bounding_box());
+        }
+        bbox
+    }
+
+    /// 检查点是否在填充区域内
+    pub fn contains_point(&self, _point: &Point2, _tolerance: f64) -> bool {
+        // TODO: 实现点在多边形内的判断（射线法）
+        false
+    }
+}
+
+// ========== 引线 (Leader) ==========
+
+/// 箭头类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ArrowType {
+    /// 无箭头
+    None,
+    /// 闭合填充箭头（默认）
+    #[default]
+    ClosedFilled,
+    /// 闭合空心箭头
+    ClosedBlank,
+    /// 开口箭头
+    Open,
+    /// 点
+    Dot,
+    /// 圆
+    Circle,
+}
+
+/// 引线
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Leader {
+    /// 顶点列表（从箭头到文本）
+    pub vertices: Vec<Point2>,
+    /// 箭头类型
+    pub arrow_type: ArrowType,
+    /// 箭头大小
+    pub arrow_size: f64,
+    /// 关联的文本
+    pub text: Option<String>,
+    /// 文本高度
+    pub text_height: f64,
+}
+
+impl Leader {
+    /// 创建新的引线
+    pub fn new(vertices: Vec<Point2>) -> Self {
+        Self {
+            vertices,
+            arrow_type: ArrowType::ClosedFilled,
+            arrow_size: 3.0,
+            text: None,
+            text_height: 2.5,
+        }
+    }
+
+    /// 设置箭头类型
+    pub fn with_arrow(mut self, arrow_type: ArrowType, size: f64) -> Self {
+        self.arrow_type = arrow_type;
+        self.arrow_size = size;
+        self
+    }
+
+    /// 设置文本
+    pub fn with_text(mut self, text: impl Into<String>, height: f64) -> Self {
+        self.text = Some(text.into());
+        self.text_height = height;
+        self
+    }
+
+    /// 获取箭头位置（第一个顶点）
+    pub fn arrow_point(&self) -> Option<Point2> {
+        self.vertices.first().copied()
+    }
+
+    /// 获取箭头方向
+    pub fn arrow_direction(&self) -> Option<Vector2> {
+        if self.vertices.len() >= 2 {
+            Some((self.vertices[0] - self.vertices[1]).normalize())
+        } else {
+            None
+        }
+    }
+
+    /// 获取文本位置（最后一个顶点）
+    pub fn text_position(&self) -> Option<Point2> {
+        self.vertices.last().copied()
+    }
+
+    /// 计算总长度
+    pub fn length(&self) -> f64 {
+        let mut total = 0.0;
+        for i in 0..self.vertices.len().saturating_sub(1) {
+            total += (self.vertices[i + 1] - self.vertices[i]).norm();
+        }
+        total
+    }
+
+    /// 计算点到引线的距离
+    pub fn distance_to_point(&self, point: &Point2) -> f64 {
+        let mut min_dist = f64::MAX;
+        for i in 0..self.vertices.len().saturating_sub(1) {
+            let line = Line::new(self.vertices[i], self.vertices[i + 1]);
+            min_dist = min_dist.min(line.distance_to_point(point));
+        }
+        min_dist
+    }
+
+    /// 获取包围盒
+    pub fn bounding_box(&self) -> BoundingBox2 {
+        if self.vertices.is_empty() {
+            return BoundingBox2::empty();
+        }
+        BoundingBox2::from_points(self.vertices.iter().copied())
     }
 }
 
