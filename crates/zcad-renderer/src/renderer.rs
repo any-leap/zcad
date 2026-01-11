@@ -11,7 +11,7 @@ use crate::vertex::{CameraUniform, LineVertex};
 use thiserror::Error;
 use zcad_core::math::BoundingBox2;
 use wgpu::util::DeviceExt;
-use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline};
+use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline, Text};
 use zcad_core::math::Point2;
 use zcad_core::properties::Color;
 
@@ -282,7 +282,24 @@ impl Renderer {
             Geometry::Polyline(polyline) => {
                 self.draw_polyline(polyline, color_arr);
             }
+            Geometry::Text(text) => {
+                // 文本渲染在 GPU 端较为复杂，这里用一个简单的标记点表示
+                // 实际的文本渲染由 egui 处理
+                self.draw_text_marker(text, color_arr);
+            }
         }
+    }
+
+    fn draw_text_marker(&mut self, text: &Text, color: [f32; 4]) {
+        // 在文本位置绘制一个小十字标记
+        let x = text.position.x as f32;
+        let y = text.position.y as f32;
+        let size = text.height as f32 * 0.5;
+        
+        self.line_vertices.push(LineVertex::new(x - size, y, color));
+        self.line_vertices.push(LineVertex::new(x + size, y, color));
+        self.line_vertices.push(LineVertex::new(x, y - size, color));
+        self.line_vertices.push(LineVertex::new(x, y + size, color));
     }
 
     fn draw_line(&mut self, line: &Line, color: [f32; 4]) {
@@ -659,6 +676,17 @@ impl Renderer {
                         ));
                     }
                 }
+            }
+            Geometry::Text(text) => {
+                // 在文本位置绘制一个小十字标记
+                let x = text.position.x as f32;
+                let y = text.position.y as f32;
+                let size = text.height as f32 * 0.5;
+                
+                vertices.push(LineVertex::new(x - size, y, color_arr));
+                vertices.push(LineVertex::new(x + size, y, color_arr));
+                vertices.push(LineVertex::new(x, y - size, color_arr));
+                vertices.push(LineVertex::new(x, y + size, color_arr));
             }
         }
     }

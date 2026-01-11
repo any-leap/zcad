@@ -15,6 +15,7 @@ pub enum DrawingTool {
     Polyline,
     Rectangle,
     Point,
+    Text,
 }
 
 impl DrawingTool {
@@ -28,6 +29,7 @@ impl DrawingTool {
             DrawingTool::Polyline => "Polyline",
             DrawingTool::Rectangle => "Rectangle",
             DrawingTool::Point => "Point",
+            DrawingTool::Text => "Text",
         }
     }
 
@@ -40,6 +42,7 @@ impl DrawingTool {
             DrawingTool::Polyline => Some("P"),
             DrawingTool::Rectangle => Some("R"),
             DrawingTool::Point => Some("."),
+            DrawingTool::Text => Some("T"),
             DrawingTool::None => None,
         }
     }
@@ -152,6 +155,12 @@ pub enum EditState {
     /// 等待命令输入
     Command {
         input: String,
+    },
+    /// 正在输入文本
+    TextInput {
+        position: Point2,
+        content: String,
+        height: f64,
     },
 }
 
@@ -311,6 +320,7 @@ impl UiState {
             "A" | "ARC" => Some(Command::SetTool(DrawingTool::Arc)),
             "P" | "PL" | "PLINE" | "POLYLINE" => Some(Command::SetTool(DrawingTool::Polyline)),
             "R" | "REC" | "RECTANGLE" => Some(Command::SetTool(DrawingTool::Rectangle)),
+            "T" | "TEXT" | "DTEXT" | "MTEXT" => Some(Command::SetTool(DrawingTool::Text)),
             "E" | "ERASE" | "DELETE" => Some(Command::DeleteSelected),
             "M" | "MOVE" => Some(Command::Move),
             "CO" | "COPY" => Some(Command::Copy),

@@ -29,6 +29,7 @@ pub fn show_toolbar(ctx: &egui::Context, ui_state: &mut UiState) {
             tool_button(ui, ui_state, DrawingTool::Polyline, "⌇", "Polyline (P)");
             tool_button(ui, ui_state, DrawingTool::Rectangle, "▭", "Rectangle (R)");
             tool_button(ui, ui_state, DrawingTool::Point, "•", "Point (.)");
+            tool_button(ui, ui_state, DrawingTool::Text, "A", "Text (T)");
 
             ui.separator();
 

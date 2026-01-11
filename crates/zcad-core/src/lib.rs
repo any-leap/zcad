@@ -41,7 +41,7 @@ pub mod prelude {
     pub use crate::async_core::{AsyncCore, Message, MessageBus};
     pub use crate::buffer::{DoubleBufferedEntities, EntityBuffer};
     pub use crate::entity::{Entity, EntityId};
-    pub use crate::geometry::{Arc, Circle, Geometry, Line, Point, Polyline};
+    pub use crate::geometry::{Arc, Circle, Geometry, Line, Point, Polyline, Text, TextAlignment};
     pub use crate::history::{HistoryTree, Operation, OperationId};
     pub use crate::layer::Layer;
     pub use crate::math::{Point2, Point3, Vector2, Vector3};

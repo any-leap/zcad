@@ -7,7 +7,7 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Arc, Circle, Geometry, Line, Point, Polyline};
+use zcad_core::geometry::{Arc, Circle, Geometry, Line, Point, Polyline, Text};
 use zcad_core::math::Point2;
 use zcad_core::properties::Color;
 use zcad_core::snap::SnapType;
@@ -214,6 +214,56 @@ impl ZcadApp {
                     painter.line_segment([s1, s2], stroke);
                 }
             }
+            Geometry::Text(text) => {
+                self.draw_text(painter, rect, text, color);
+            }
+        }
+    }
+
+    /// 绘制文本
+    fn draw_text(&self, painter: &egui::Painter, rect: &egui::Rect, text: &Text, color: Color) {
+        let screen_pos = self.world_to_screen(text.position, rect);
+        let screen_height = (text.height * self.camera_zoom) as f32;
+        
+        // 限制最小显示字号
+        if screen_height < 4.0 {
+            // 太小时显示一个占位符点
+            painter.circle_filled(screen_pos, 2.0, egui::Color32::from_rgb(color.r, color.g, color.b));
+            return;
+        }
+
+        let font_id = egui::FontId::proportional(screen_height.clamp(8.0, 200.0));
+        let text_color = egui::Color32::from_rgb(color.r, color.g, color.b);
+        
+        // 创建文本绘制任务
+        let galley = painter.layout_no_wrap(
+            text.content.clone(),
+            font_id,
+            text_color,
+        );
+        
+        // 计算对齐偏移
+        let text_width = galley.rect.width();
+        let align_offset = match text.alignment {
+            zcad_core::geometry::TextAlignment::Left => 0.0,
+            zcad_core::geometry::TextAlignment::Center => -text_width / 2.0,
+            zcad_core::geometry::TextAlignment::Right => -text_width,
+        };
+        
+        // Y轴翻转：egui的Y轴向下，CAD的Y轴向上
+        // 文本的position是基线位置，需要调整
+        let draw_pos = egui::Pos2::new(
+            screen_pos.x + align_offset,
+            screen_pos.y - screen_height, // 向上偏移一个字高
+        );
+        
+        // 如果有旋转，需要使用变换
+        if text.rotation.abs() > 0.001 {
+            // egui不直接支持旋转文本，这里简化处理
+            // 可以通过mesh来实现，但这里先用简单方式
+            painter.galley(draw_pos, galley, text_color);
+        } else {
+            painter.galley(draw_pos, galley, text_color);
         }
     }
 
@@ -585,6 +635,15 @@ impl ZcadApp {
                     self.document.add_entity(entity);
                     self.ui_state.status_message = "点已创建".to_string();
                 }
+                DrawingTool::Text => {
+                    // 进入文本输入模式
+                    self.ui_state.edit_state = EditState::TextInput {
+                        position: world_pos,
+                        content: String::new(),
+                        height: 10.0, // 默认文本高度
+                    };
+                    self.ui_state.status_message = "输入文本内容，按 Enter 确认:".to_string();
+                }
                 DrawingTool::Select => {
                     let hits = self.document.query_point(&world_pos, 5.0 / self.camera_zoom);
                     self.ui_state.clear_selection();
@@ -882,6 +941,12 @@ impl eframe::App for ZcadApp {
                         format!("顶点数: {}", p.vertex_count()),
                         format!("长度: {:.3}", p.length()),
                     ],
+                    Geometry::Text(t) => vec![
+                        format!("内容: {}", t.content),
+                        format!("位置: ({:.2}, {:.2})", t.position.x, t.position.y),
+                        format!("高度: {:.3}", t.height),
+                    ],
+                    #[allow(unreachable_patterns)]
                     _ => vec![],
                 };
                 (name, props)
@@ -958,6 +1023,10 @@ impl eframe::App for ZcadApp {
                         self.ui_state.set_tool(DrawingTool::Rectangle);
                         ui.close();
                     }
+                    if ui.button("A 文本 (T)").clicked() {
+                        self.ui_state.set_tool(DrawingTool::Text);
+                        ui.close();
+                    }
                 });
             });
         });
@@ -983,6 +1052,9 @@ impl eframe::App for ZcadApp {
                 }
                 if ui.selectable_label(current_tool == DrawingTool::Polyline, "⌇ 多段线").clicked() {
                     self.ui_state.set_tool(DrawingTool::Polyline);
+                }
+                if ui.selectable_label(current_tool == DrawingTool::Text, "A 文本").clicked() {
+                    self.ui_state.set_tool(DrawingTool::Text);
                 }
                 ui.separator();
                 if ui.button("🗑").on_hover_text("删除选中").clicked() {
@@ -1072,6 +1144,74 @@ impl eframe::App for ZcadApp {
             ui.label(format!("Y: {:.4}", mouse_world.y));
         });
 
+        // ===== 文本输入对话框 =====
+        let mut text_action: Option<bool> = None; // Some(true) = 确认, Some(false) = 取消
+        let text_input_data = if let EditState::TextInput { position, content, height } = &self.ui_state.edit_state {
+            Some((*position, content.clone(), *height))
+        } else {
+            None
+        };
+        
+        if let Some((pos, mut content, mut height)) = text_input_data {
+            egui::Window::new("输入文本")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("内容:");
+                        let response = ui.text_edit_singleline(&mut content);
+                        // 自动聚焦到输入框
+                        response.request_focus();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("高度:");
+                        ui.add(egui::DragValue::new(&mut height)
+                            .speed(0.5)
+                            .range(1.0..=1000.0));
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("  确定  ").clicked() {
+                            text_action = Some(true);
+                        }
+                        if ui.button("  取消  ").clicked() {
+                            text_action = Some(false);
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(format!("位置: ({:.2}, {:.2})", pos.x, pos.y));
+                    ui.label("提示: 点击确定或取消按钮");
+                });
+            
+            // 更新编辑状态中的内容
+            self.ui_state.edit_state = EditState::TextInput {
+                position: pos,
+                content,
+                height,
+            };
+        }
+        
+        // 处理文本确认/取消
+        match text_action {
+            Some(true) => {
+                if let EditState::TextInput { position, content, height } = &self.ui_state.edit_state {
+                    if !content.is_empty() {
+                        let text = Text::new(*position, content.clone(), *height);
+                        let entity = Entity::new(Geometry::Text(text));
+                        self.document.add_entity(entity);
+                        self.ui_state.status_message = "文本已创建".to_string();
+                    }
+                }
+                self.ui_state.edit_state = EditState::Idle;
+            }
+            Some(false) => {
+                self.ui_state.edit_state = EditState::Idle;
+                self.ui_state.status_message = "取消".to_string();
+            }
+            None => {}
+        }
+
         // ===== 中央绘图区域 =====
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(30, 30, 46)))
@@ -1122,76 +1262,83 @@ impl eframe::App for ZcadApp {
                     self.handle_right_click();
                 }
 
-                // 处理键盘快捷键
-                ui.input(|i| {
-                    // 文件操作
-                    if i.modifiers.command && i.key_pressed(egui::Key::N) {
-                        self.document = Document::new();
-                        self.ui_state.clear_selection();
-                        self.ui_state.status_message = "新文档".to_string();
-                    }
-                    if i.modifiers.command && i.key_pressed(egui::Key::O) {
-                        self.show_open_dialog();
-                    }
-                    if i.modifiers.command && i.key_pressed(egui::Key::S) {
-                        if i.modifiers.shift {
-                            self.show_save_dialog();
-                        } else {
-                            self.quick_save();
+                // 处理键盘快捷键（仅在非文本输入状态下）
+                let is_text_input = matches!(self.ui_state.edit_state, EditState::TextInput { .. });
+                if !is_text_input {
+                    ui.input(|i| {
+                        // 文件操作
+                        if i.modifiers.command && i.key_pressed(egui::Key::N) {
+                            self.document = Document::new();
+                            self.ui_state.clear_selection();
+                            self.ui_state.status_message = "新文档".to_string();
                         }
-                    }
-                    
-                    // 编辑操作
-                    if i.key_pressed(egui::Key::Escape) {
-                        self.ui_state.cancel();
-                    }
-                    if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
-                        for id in self.ui_state.selected_entities.clone() {
-                            self.document.remove_entity(&id);
+                        if i.modifiers.command && i.key_pressed(egui::Key::O) {
+                            self.show_open_dialog();
                         }
-                        self.ui_state.clear_selection();
-                    }
-                    
-                    // 绘图工具
-                    if i.key_pressed(egui::Key::L) {
-                        self.ui_state.set_tool(DrawingTool::Line);
-                    }
-                    if i.key_pressed(egui::Key::C) {
-                        self.ui_state.set_tool(DrawingTool::Circle);
-                    }
-                    if i.key_pressed(egui::Key::R) {
-                        self.ui_state.set_tool(DrawingTool::Rectangle);
-                    }
-                    if i.key_pressed(egui::Key::Space) {
-                        self.ui_state.set_tool(DrawingTool::Select);
-                    }
-                    
-                    // 视图操作
-                    if i.key_pressed(egui::Key::Z) {
-                        self.zoom_to_fit();
-                    }
-                    if i.key_pressed(egui::Key::G) {
-                        self.ui_state.show_grid = !self.ui_state.show_grid;
-                    }
-                    if i.key_pressed(egui::Key::F3) {
-                        self.ui_state.snap_state.enabled = !self.ui_state.snap_state.enabled;
-                        let status = if self.ui_state.snap_state.enabled { "捕捉已启用" } else { "捕捉已禁用" };
-                        self.ui_state.status_message = status.to_string();
-                    }
-                    if i.key_pressed(egui::Key::F8) {
-                        self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
-                        let status = if self.ui_state.ortho_mode { "正交模式已启用" } else { "正交模式已禁用" };
-                        self.ui_state.status_message = status.to_string();
-                    }
-                    // 圆弧快捷键
-                    if i.key_pressed(egui::Key::A) {
-                        self.ui_state.set_tool(DrawingTool::Arc);
-                    }
-                    // 多段线快捷键
-                    if i.key_pressed(egui::Key::P) {
-                        self.ui_state.set_tool(DrawingTool::Polyline);
-                    }
-                });
+                        if i.modifiers.command && i.key_pressed(egui::Key::S) {
+                            if i.modifiers.shift {
+                                self.show_save_dialog();
+                            } else {
+                                self.quick_save();
+                            }
+                        }
+                        
+                        // 编辑操作
+                        if i.key_pressed(egui::Key::Escape) {
+                            self.ui_state.cancel();
+                        }
+                        if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                            for id in self.ui_state.selected_entities.clone() {
+                                self.document.remove_entity(&id);
+                            }
+                            self.ui_state.clear_selection();
+                        }
+                        
+                        // 绘图工具
+                        if i.key_pressed(egui::Key::L) {
+                            self.ui_state.set_tool(DrawingTool::Line);
+                        }
+                        if i.key_pressed(egui::Key::C) {
+                            self.ui_state.set_tool(DrawingTool::Circle);
+                        }
+                        if i.key_pressed(egui::Key::R) {
+                            self.ui_state.set_tool(DrawingTool::Rectangle);
+                        }
+                        if i.key_pressed(egui::Key::Space) {
+                            self.ui_state.set_tool(DrawingTool::Select);
+                        }
+                        
+                        // 视图操作
+                        if i.key_pressed(egui::Key::Z) {
+                            self.zoom_to_fit();
+                        }
+                        if i.key_pressed(egui::Key::G) {
+                            self.ui_state.show_grid = !self.ui_state.show_grid;
+                        }
+                        if i.key_pressed(egui::Key::F3) {
+                            self.ui_state.snap_state.enabled = !self.ui_state.snap_state.enabled;
+                            let status = if self.ui_state.snap_state.enabled { "捕捉已启用" } else { "捕捉已禁用" };
+                            self.ui_state.status_message = status.to_string();
+                        }
+                        if i.key_pressed(egui::Key::F8) {
+                            self.ui_state.ortho_mode = !self.ui_state.ortho_mode;
+                            let status = if self.ui_state.ortho_mode { "正交模式已启用" } else { "正交模式已禁用" };
+                            self.ui_state.status_message = status.to_string();
+                        }
+                        // 圆弧快捷键
+                        if i.key_pressed(egui::Key::A) {
+                            self.ui_state.set_tool(DrawingTool::Arc);
+                        }
+                        // 多段线快捷键
+                        if i.key_pressed(egui::Key::P) {
+                            self.ui_state.set_tool(DrawingTool::Polyline);
+                        }
+                        // 文本快捷键
+                        if i.key_pressed(egui::Key::T) {
+                            self.ui_state.set_tool(DrawingTool::Text);
+                        }
+                    });
+                }
 
                 // ===== 绘制 =====
                 // 绘制网格

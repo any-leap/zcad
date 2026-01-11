@@ -307,6 +307,20 @@ impl SnapEngine {
             Geometry::Polyline(polyline) => {
                 self.collect_polyline_snap_points(polyline, entity.id, mouse, tolerance, reference_point);
             }
+            Geometry::Text(text) => {
+                // 文本只捕捉插入点
+                if self.config.enabled_types.is_enabled(SnapType::Endpoint) {
+                    let dist = (text.position - mouse).norm();
+                    if dist <= tolerance {
+                        self.candidates.push(SnapPoint::new(
+                            text.position,
+                            SnapType::Endpoint,
+                            Some(entity.id),
+                            dist,
+                        ));
+                    }
+                }
+            }
         }
     }
 

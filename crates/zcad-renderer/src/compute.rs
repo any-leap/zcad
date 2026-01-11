@@ -566,6 +566,19 @@ impl ComputeShader {
                     param2: arc.end_angle as f32,
                 }
             ],
+            Geometry::Text(text) => vec![
+                GpuGeometryData {
+                    geometry_type: 6, // Text (represented as a point for GPU operations)
+                    x1: text.position.x as f32,
+                    y1: text.position.y as f32,
+                    x2: 0.0,
+                    y2: 0.0,
+                    radius: text.height as f32,
+                    bulge: 0.0,
+                    param1: text.rotation as f32,
+                    param2: 0.0,
+                }
+            ],
         }
     }
 

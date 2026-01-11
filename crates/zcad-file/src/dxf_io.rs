@@ -6,7 +6,7 @@ use crate::document::Document;
 use crate::error::FileError;
 use std::path::Path;
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline, PolylineVertex};
+use zcad_core::geometry::{Arc, Circle, Geometry, Line, Polyline, PolylineVertex, Text};
 use zcad_core::math::Point2;
 use zcad_core::properties::{Color, Properties};
 
@@ -76,6 +76,26 @@ fn convert_dxf_entity(entity: &dxf::entities::Entity) -> Option<Entity> {
                 .collect();
 
             Geometry::Polyline(Polyline::new(vertices, poly.is_closed()))
+        }
+
+        dxf::entities::EntityType::Text(text) => {
+            let position = Point2::new(text.location.x, text.location.y);
+            let height = text.text_height;
+            let rotation = text.rotation.to_radians();
+            let mut zcad_text = Text::new(position, text.value.clone(), height);
+            zcad_text.rotation = rotation;
+            Geometry::Text(zcad_text)
+        }
+
+        dxf::entities::EntityType::MText(mtext) => {
+            let position = Point2::new(mtext.insertion_point.x, mtext.insertion_point.y);
+            let height = mtext.initial_text_height;
+            let rotation = mtext.rotation_angle.to_radians();
+            // MText 内容可能包含格式代码，这里简化处理
+            let content = mtext.text.replace("\\P", "\n"); // 简单的换行处理
+            let mut zcad_text = Text::new(position, content, height);
+            zcad_text.rotation = rotation;
+            Geometry::Text(zcad_text)
         }
 
         // TODO: 支持更多实体类型
@@ -168,6 +188,15 @@ fn convert_to_dxf_entity(entity: &Entity) -> Option<dxf::entities::Entity> {
             let mut dxf_point = dxf::entities::ModelPoint::default();
             dxf_point.location = dxf::Point::new(point.position.x, point.position.y, 0.0);
             dxf::entities::EntityType::ModelPoint(dxf_point)
+        }
+
+        Geometry::Text(text) => {
+            let mut dxf_text = dxf::entities::Text::default();
+            dxf_text.location = dxf::Point::new(text.position.x, text.position.y, 0.0);
+            dxf_text.text_height = text.height;
+            dxf_text.value = text.content.clone();
+            dxf_text.rotation = text.rotation.to_degrees();
+            dxf::entities::EntityType::Text(dxf_text)
         }
     };
 
