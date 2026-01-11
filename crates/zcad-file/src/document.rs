@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use zcad_core::entity::{Entity, EntityId};
 use zcad_core::layer::LayerManager;
+use zcad_core::layout::LayoutManager;
 use zcad_core::math::BoundingBox2;
 use zcad_core::spatial::SpatialIndex;
 
@@ -79,6 +80,9 @@ pub struct Document {
     /// 保存的视图
     pub views: Vec<SavedView>,
 
+    /// 布局管理器
+    pub layout_manager: LayoutManager,
+
     /// 是否已修改
     modified: bool,
 
@@ -95,6 +99,7 @@ impl Document {
             layers: LayerManager::new(),
             spatial_index: SpatialIndex::default_grid(),
             views: Vec::new(),
+            layout_manager: LayoutManager::new(),
             modified: false,
             file_path: None,
         }

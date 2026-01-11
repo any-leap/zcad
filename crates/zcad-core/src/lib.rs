@@ -28,11 +28,13 @@ pub mod dimstyle;
 pub mod entity;
 pub mod geometry;
 pub mod grip;
+pub mod layout;
 pub mod history;
 pub mod input_parser;
 pub mod layer;
 pub mod math;
 pub mod parametric;
+pub mod performance;
 pub mod properties;
 pub mod snap;
 pub mod solver;
@@ -61,5 +63,6 @@ pub mod prelude {
     pub use crate::grip::{Grip, GripType, GripData, get_grips_for_geometry, update_geometry_by_grip};
     pub use crate::units::{Unit, LinearFormat, AngleUnit, AngleFormat, convert, format_linear, format_angle};
     pub use crate::dimstyle::{DimStyle, DimStyleManager, ArrowType, DimTextAlignment, DimTextVertical};
+    pub use crate::layout::{Layout, LayoutId, LayoutManager, Viewport, ViewportId, SpaceType, PaperSize, PaperOrientation, ViewportStatus, STANDARD_SCALES};
 }
 

@@ -1,6 +1,9 @@
 //! DXF文件导入/导出
 //!
-//! 支持AutoCAD DXF格式的读写。
+//! 支持AutoCAD DXF格式的读写，包括：
+//! - 模型空间实体
+//! - 图纸空间（Layout）
+//! - 视口（Viewport）
 
 use crate::document::Document;
 use crate::error::FileError;
@@ -10,6 +13,8 @@ use zcad_core::geometry::{
     Arc, Circle, Ellipse, Geometry, Leader, Line, Polyline, PolylineVertex, 
     Spline, Text,
 };
+// 布局相关导入（用于简化的布局导入功能）
+// use zcad_core::layout::{Layout, Viewport, ViewportId};
 use zcad_core::math::{Point2, Vector2};
 use zcad_core::properties::{Color, Properties};
 
@@ -26,17 +31,112 @@ pub fn import(path: &Path) -> Result<Document, FileError> {
         document.layers.add_layer(new_layer);
     }
 
-    // 导入实体
+    // 导入模型空间实体
     for entity in drawing.entities() {
         if let Some(zcad_entity) = convert_dxf_entity(entity) {
             document.add_entity(zcad_entity);
         }
     }
 
+    // 导入布局信息
+    // 注意：dxf crate 对 Layout/Viewport 的支持有限
+    // 我们创建一个默认视口来显示模型空间的范围
+    import_layouts_simplified(&drawing, &mut document);
+
     // 设置文件路径
     document.set_file_path(path);
 
     Ok(document)
+}
+
+/// 简化的布局导入
+/// 
+/// 由于 dxf crate 对 VIEWPORT 实体的支持有限，
+/// 这里使用简化的方式：基于模型空间范围创建默认视口
+fn import_layouts_simplified(drawing: &dxf::Drawing, document: &mut Document) {
+    // 计算模型空间的边界
+    let mut min_x = f64::MAX;
+    let mut min_y = f64::MAX;
+    let mut max_x = f64::MIN;
+    let mut max_y = f64::MIN;
+    let mut has_entities = false;
+    
+    for entity in drawing.entities() {
+        if let Some(bbox) = get_entity_bounds(entity) {
+            min_x = min_x.min(bbox.0);
+            min_y = min_y.min(bbox.1);
+            max_x = max_x.max(bbox.2);
+            max_y = max_y.max(bbox.3);
+            has_entities = true;
+        }
+    }
+    
+    // 如果有实体，更新默认视口的视图范围
+    if has_entities {
+        if let Some(layout) = document.layout_manager.get_layout_by_name("Layout1") {
+            let layout_id = layout.id;
+            if let Some(layout) = document.layout_manager.get_layout_mut(layout_id) {
+                // 更新第一个视口的视图中心和比例
+                if let Some(viewport) = layout.viewports.first_mut() {
+                    let model_width = max_x - min_x;
+                    let model_height = max_y - min_y;
+                    
+                    // 设置视图中心
+                    viewport.view_center = Point2::new(
+                        (min_x + max_x) / 2.0,
+                        (min_y + max_y) / 2.0,
+                    );
+                    
+                    // 计算合适的比例
+                    let scale_x = model_width / viewport.width;
+                    let scale_y = model_height / viewport.height;
+                    viewport.scale = scale_x.max(scale_y) * 1.1; // 留 10% 边距
+                }
+            }
+        }
+    }
+}
+
+/// 获取实体的边界范围
+fn get_entity_bounds(entity: &dxf::entities::Entity) -> Option<(f64, f64, f64, f64)> {
+    match &entity.specific {
+        dxf::entities::EntityType::Line(line) => {
+            let min_x = line.p1.x.min(line.p2.x);
+            let min_y = line.p1.y.min(line.p2.y);
+            let max_x = line.p1.x.max(line.p2.x);
+            let max_y = line.p1.y.max(line.p2.y);
+            Some((min_x, min_y, max_x, max_y))
+        }
+        dxf::entities::EntityType::Circle(circle) => {
+            let r = circle.radius;
+            Some((
+                circle.center.x - r,
+                circle.center.y - r,
+                circle.center.x + r,
+                circle.center.y + r,
+            ))
+        }
+        dxf::entities::EntityType::Arc(arc) => {
+            let r = arc.radius;
+            Some((
+                arc.center.x - r,
+                arc.center.y - r,
+                arc.center.x + r,
+                arc.center.y + r,
+            ))
+        }
+        dxf::entities::EntityType::LwPolyline(lwpoly) => {
+            if lwpoly.vertices.is_empty() {
+                return None;
+            }
+            let min_x = lwpoly.vertices.iter().map(|v| v.x).fold(f64::MAX, f64::min);
+            let min_y = lwpoly.vertices.iter().map(|v| v.y).fold(f64::MAX, f64::min);
+            let max_x = lwpoly.vertices.iter().map(|v| v.x).fold(f64::MIN, f64::max);
+            let max_y = lwpoly.vertices.iter().map(|v| v.y).fold(f64::MIN, f64::max);
+            Some((min_x, min_y, max_x, max_y))
+        }
+        _ => None,
+    }
 }
 
 /// 将DXF实体转换为ZCAD实体
@@ -258,18 +358,46 @@ pub fn export(document: &Document, path: &Path) -> Result<(), FileError> {
         drawing.add_layer(dxf_layer);
     }
 
-    // 导出实体
+    // 导出模型空间实体
     for entity in document.all_entities() {
         if let Some(dxf_entity) = convert_to_dxf_entity(entity) {
             drawing.add_entity(dxf_entity);
         }
     }
 
+    // 导出图纸空间实体（如果有）
+    export_paper_space_entities(document, &mut drawing);
+
     drawing
         .save_file(path)
         .map_err(|e| FileError::Dxf(e.to_string()))?;
 
     Ok(())
+}
+
+/// 导出图纸空间实体
+/// 
+/// 注意：dxf crate 对 VIEWPORT 实体的支持有限
+/// 这里只导出图纸空间的普通实体（如图框、标题栏等）
+fn export_paper_space_entities(document: &Document, drawing: &mut dxf::Drawing) {
+    // 遍历所有布局
+    for layout in document.layout_manager.layouts() {
+        // 导出图纸空间实体
+        for entity in &layout.paper_space_entities {
+            if let Some(dxf_entity) = convert_to_dxf_entity(entity) {
+                // 注意：完整的图纸空间支持需要将实体放入正确的块记录
+                // dxf crate 可能不完全支持此功能
+                // 当前实现将图纸空间实体也放入模型空间
+                drawing.add_entity(dxf_entity);
+            }
+        }
+    }
+    
+    // 注意：完整的布局/视口导出需要：
+    // 1. 创建 BLOCK_RECORD 表项
+    // 2. 创建 LAYOUT 对象
+    // 3. 创建 VIEWPORT 实体
+    // dxf crate 可能不完全支持这些高级功能
 }
 
 /// 将ZCAD实体转换为DXF实体

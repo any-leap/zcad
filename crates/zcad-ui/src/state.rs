@@ -1,6 +1,7 @@
 //! UI状态管理
 
 use zcad_core::entity::EntityId;
+use zcad_core::layout::{LayoutManager, LayoutId, ViewportId, SpaceType};
 use zcad_core::math::Point2;
 use zcad_core::snap::{SnapConfig, SnapEngine, SnapPoint, SnapType};
 
@@ -307,6 +308,9 @@ pub struct UiState {
 
     /// 是否需要聚焦命令行
     pub should_focus_command_line: bool,
+    
+    /// 布局管理器
+    pub layout_manager: LayoutManager,
 }
 
 impl UiState {
@@ -351,6 +355,7 @@ impl Default for UiState {
             pending_command: None,
             last_command: None,
             should_focus_command_line: false,
+            layout_manager: LayoutManager::new(),
         }
     }
 }
@@ -389,6 +394,81 @@ impl UiState {
     /// 清空选择
     pub fn clear_selection(&mut self) {
         self.selected_entities.clear();
+    }
+    
+    // ===== 布局相关方法 =====
+    
+    /// 是否在模型空间
+    pub fn is_model_space(&self) -> bool {
+        self.layout_manager.is_model_space()
+    }
+    
+    /// 是否在图纸空间
+    pub fn is_paper_space(&self) -> bool {
+        self.layout_manager.is_paper_space()
+    }
+    
+    /// 切换到模型空间
+    pub fn switch_to_model(&mut self) {
+        self.layout_manager.switch_to_model();
+        self.status_message = "切换到模型空间".to_string();
+    }
+    
+    /// 切换到指定布局
+    pub fn switch_to_layout(&mut self, name: &str) {
+        if self.layout_manager.switch_to_layout_by_name(name) {
+            self.status_message = format!("切换到布局: {}", name);
+        } else {
+            self.status_message = format!("布局不存在: {}", name);
+        }
+    }
+    
+    /// 获取当前空间名称（用于显示）
+    pub fn current_space_name(&self) -> &str {
+        match self.layout_manager.current_space() {
+            SpaceType::Model => "模型",
+            SpaceType::Paper(_) => {
+                if let Some(layout) = self.layout_manager.current_layout() {
+                    &layout.name
+                } else {
+                    "Layout"
+                }
+            }
+        }
+    }
+    
+    /// 获取所有布局标签（用于 UI 显示）
+    pub fn layout_tabs(&self) -> Vec<(String, bool)> {
+        let mut tabs = vec![];
+        
+        // 模型空间标签
+        tabs.push(("模型".to_string(), self.layout_manager.is_model_space()));
+        
+        // 所有布局标签
+        for layout in self.layout_manager.layouts() {
+            let is_current = matches!(
+                self.layout_manager.current_space(),
+                SpaceType::Paper(id) if id == layout.id
+            );
+            tabs.push((layout.name.clone(), is_current));
+        }
+        
+        tabs
+    }
+    
+    /// 添加新布局
+    pub fn add_layout(&mut self) -> String {
+        let count = self.layout_manager.layouts().len() + 1;
+        let name = format!("Layout{}", count);
+        let id = self.layout_manager.add_layout(&name);
+        
+        // 为新布局添加默认视口
+        if let Some(layout) = self.layout_manager.get_layout_mut(id) {
+            layout.add_default_viewport();
+        }
+        
+        self.status_message = format!("已创建新布局: {}", name);
+        name
     }
 
     /// 添加到选择
