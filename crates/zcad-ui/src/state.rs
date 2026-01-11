@@ -156,11 +156,23 @@ pub enum EditState {
     Command {
         input: String,
     },
-    /// 正在输入文本
+    /// 正在输入文本（新建）
     TextInput {
         position: Point2,
         content: String,
         height: f64,
+    },
+    /// 正在编辑现有文本
+    TextEdit {
+        entity_id: EntityId,
+        position: Point2,
+        content: String,
+        height: f64,
+    },
+    /// 正在移动实体
+    MovingEntities {
+        start_pos: Point2,
+        entity_ids: Vec<EntityId>,
     },
 }
 

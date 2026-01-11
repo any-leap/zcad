@@ -26,6 +26,9 @@ struct ZcadApp {
     
     // 文件操作状态
     pending_file_op: Option<FileOperation>,
+    
+    // 剪贴板（存储复制的几何体）
+    clipboard: Vec<Geometry>,
 }
 
 /// 文件操作类型
@@ -44,6 +47,7 @@ impl Default for ZcadApp {
             camera_zoom: 1.5,
             viewport_size: (800.0, 600.0),
             pending_file_op: None,
+            clipboard: Vec::new(),
         };
         app.create_demo_content();
         app
@@ -584,6 +588,48 @@ impl ZcadApp {
                 _ => {}
             }
         }
+        
+        // 移动预览
+        if let EditState::MovingEntities { start_pos, entity_ids } = &self.ui_state.edit_state {
+            let preview_color = Color::from_hex(0x00FFFF); // 青色
+            let mouse_pos = self.ui_state.mouse_world_pos;
+            let offset = mouse_pos - *start_pos;
+            
+            for id in entity_ids {
+                if let Some(entity) = self.document.get_entity(id) {
+                    let mut preview_geom = entity.geometry.clone();
+                    self.apply_offset_to_geometry_preview(&mut preview_geom, offset);
+                    self.draw_geometry(painter, rect, &preview_geom, preview_color);
+                }
+            }
+        }
+    }
+    
+    /// 对几何体应用偏移（预览用，不修改原始）
+    fn apply_offset_to_geometry_preview(&self, geometry: &mut Geometry, offset: zcad_core::math::Vector2) {
+        match geometry {
+            Geometry::Point(p) => {
+                p.position = p.position + offset;
+            }
+            Geometry::Line(l) => {
+                l.start = l.start + offset;
+                l.end = l.end + offset;
+            }
+            Geometry::Circle(c) => {
+                c.center = c.center + offset;
+            }
+            Geometry::Arc(a) => {
+                a.center = a.center + offset;
+            }
+            Geometry::Polyline(pl) => {
+                for v in &mut pl.vertices {
+                    v.point = v.point + offset;
+                }
+            }
+            Geometry::Text(t) => {
+                t.position = t.position + offset;
+            }
+        }
     }
 
     /// 处理左键点击
@@ -785,6 +831,134 @@ impl ZcadApp {
         } else {
             self.ui_state.cancel();
         }
+    }
+
+    /// 处理双击（编辑文本）
+    fn handle_double_click(&mut self) {
+        let world_pos = self.ui_state.mouse_world_pos;
+        let hits = self.document.query_point(&world_pos, 5.0 / self.camera_zoom);
+        
+        if let Some(entity) = hits.first() {
+            if let Geometry::Text(text) = &entity.geometry {
+                // 进入文本编辑模式
+                self.ui_state.edit_state = EditState::TextEdit {
+                    entity_id: entity.id,
+                    position: text.position,
+                    content: text.content.clone(),
+                    height: text.height,
+                };
+                self.ui_state.status_message = "编辑文本，点击确定保存:".to_string();
+            }
+        }
+    }
+
+    /// 处理拖拽
+    fn handle_drag(&mut self, _delta: egui::Vec2) {
+        match &self.ui_state.edit_state {
+            EditState::MovingEntities { .. } => {
+                // 移动过程中不需要额外处理，预览会自动更新
+            }
+            EditState::Idle if self.ui_state.current_tool == DrawingTool::Select => {
+                // 选中状态下开始拖拽 = 开始移动
+                if !self.ui_state.selected_entities.is_empty() {
+                    let world_pos = self.ui_state.mouse_world_pos;
+                    self.ui_state.edit_state = EditState::MovingEntities {
+                        start_pos: world_pos,
+                        entity_ids: self.ui_state.selected_entities.clone(),
+                    };
+                    self.ui_state.status_message = "移动实体，释放鼠标确认:".to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 处理拖拽结束
+    fn handle_drag_end(&mut self) {
+        if let EditState::MovingEntities { start_pos, entity_ids } = &self.ui_state.edit_state {
+            let end_pos = self.ui_state.mouse_world_pos;
+            let offset = end_pos - *start_pos;
+            
+            // 应用移动
+            for id in entity_ids.clone() {
+                if let Some(entity) = self.document.get_entity(&id) {
+                    let mut new_entity = entity.clone();
+                    self.apply_offset_to_geometry(&mut new_entity.geometry, offset);
+                    self.document.update_entity(&id, new_entity);
+                }
+            }
+            
+            self.ui_state.status_message = format!("已移动 {} 个实体", entity_ids.len());
+            self.ui_state.edit_state = EditState::Idle;
+        }
+    }
+
+    /// 对几何体应用偏移
+    fn apply_offset_to_geometry(&self, geometry: &mut Geometry, offset: zcad_core::math::Vector2) {
+        match geometry {
+            Geometry::Point(p) => {
+                p.position = p.position + offset;
+            }
+            Geometry::Line(l) => {
+                l.start = l.start + offset;
+                l.end = l.end + offset;
+            }
+            Geometry::Circle(c) => {
+                c.center = c.center + offset;
+            }
+            Geometry::Arc(a) => {
+                a.center = a.center + offset;
+            }
+            Geometry::Polyline(pl) => {
+                for v in &mut pl.vertices {
+                    v.point = v.point + offset;
+                }
+            }
+            Geometry::Text(t) => {
+                t.position = t.position + offset;
+            }
+        }
+    }
+
+    /// 复制选中的实体
+    fn copy_selected(&mut self) {
+        self.clipboard.clear();
+        for id in &self.ui_state.selected_entities {
+            if let Some(entity) = self.document.get_entity(id) {
+                self.clipboard.push(entity.geometry.clone());
+            }
+        }
+        if !self.clipboard.is_empty() {
+            self.ui_state.status_message = format!("已复制 {} 个实体", self.clipboard.len());
+        }
+    }
+
+    /// 粘贴实体
+    fn paste_entities(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        
+        let mouse_pos = self.ui_state.mouse_world_pos;
+        self.ui_state.clear_selection();
+        
+        for geom in &self.clipboard {
+            let mut new_geom = geom.clone();
+            // 计算原始中心到鼠标位置的偏移
+            let bbox = new_geom.bounding_box();
+            let center = Point2::new(
+                (bbox.min.x + bbox.max.x) / 2.0,
+                (bbox.min.y + bbox.max.y) / 2.0,
+            );
+            let offset = mouse_pos - center;
+            self.apply_offset_to_geometry(&mut new_geom, offset);
+            
+            let entity = Entity::new(new_geom);
+            let id = self.document.add_entity(entity);
+            self.ui_state.add_to_selection(id);
+        }
+        
+        self.ui_state.status_message = format!("已粘贴 {} 个实体", self.clipboard.len());
     }
 
     /// 缩放到适合视图
@@ -1212,6 +1386,76 @@ impl eframe::App for ZcadApp {
             None => {}
         }
 
+        // ===== 文本编辑对话框（编辑现有文本）=====
+        let mut text_edit_action: Option<bool> = None;
+        let text_edit_data = if let EditState::TextEdit { entity_id, position, content, height } = &self.ui_state.edit_state {
+            Some((*entity_id, *position, content.clone(), *height))
+        } else {
+            None
+        };
+        
+        if let Some((entity_id, pos, mut content, mut height)) = text_edit_data {
+            egui::Window::new("编辑文本")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("内容:");
+                        let response = ui.text_edit_singleline(&mut content);
+                        response.request_focus();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("高度:");
+                        ui.add(egui::DragValue::new(&mut height)
+                            .speed(0.5)
+                            .range(1.0..=1000.0));
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("  保存  ").clicked() {
+                            text_edit_action = Some(true);
+                        }
+                        if ui.button("  取消  ").clicked() {
+                            text_edit_action = Some(false);
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.label(format!("位置: ({:.2}, {:.2})", pos.x, pos.y));
+                });
+            
+            // 更新编辑状态中的内容
+            self.ui_state.edit_state = EditState::TextEdit {
+                entity_id,
+                position: pos,
+                content,
+                height,
+            };
+        }
+        
+        // 处理文本编辑确认/取消
+        match text_edit_action {
+            Some(true) => {
+                if let EditState::TextEdit { entity_id, position, content, height } = &self.ui_state.edit_state {
+                    if !content.is_empty() {
+                        let text = Text::new(*position, content.clone(), *height);
+                        if let Some(entity) = self.document.get_entity(entity_id) {
+                            let mut new_entity = entity.clone();
+                            new_entity.geometry = Geometry::Text(text);
+                            self.document.update_entity(entity_id, new_entity);
+                            self.ui_state.status_message = "文本已更新".to_string();
+                        }
+                    }
+                }
+                self.ui_state.edit_state = EditState::Idle;
+            }
+            Some(false) => {
+                self.ui_state.edit_state = EditState::Idle;
+                self.ui_state.status_message = "取消".to_string();
+            }
+            None => {}
+        }
+
         // ===== 中央绘图区域 =====
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(30, 30, 46)))
@@ -1252,9 +1496,21 @@ impl eframe::App for ZcadApp {
                     self.camera_center.y += (delta.y as f64) / self.camera_zoom;
                 }
 
+                // 处理双击（编辑文本）
+                if response.double_clicked_by(egui::PointerButton::Primary) {
+                    self.handle_double_click();
+                }
                 // 处理左键点击
-                if response.clicked_by(egui::PointerButton::Primary) {
+                else if response.clicked_by(egui::PointerButton::Primary) {
                     self.handle_left_click();
+                }
+
+                // 处理拖拽移动
+                if response.dragged_by(egui::PointerButton::Primary) {
+                    self.handle_drag(response.drag_delta());
+                }
+                if response.drag_stopped_by(egui::PointerButton::Primary) {
+                    self.handle_drag_end();
                 }
 
                 // 处理右键（结束多段线或取消）
@@ -1263,7 +1519,7 @@ impl eframe::App for ZcadApp {
                 }
 
                 // 处理键盘快捷键（仅在非文本输入状态下）
-                let is_text_input = matches!(self.ui_state.edit_state, EditState::TextInput { .. });
+                let is_text_input = matches!(self.ui_state.edit_state, EditState::TextInput { .. } | EditState::TextEdit { .. });
                 if !is_text_input {
                     ui.input(|i| {
                         // 文件操作
@@ -1292,6 +1548,23 @@ impl eframe::App for ZcadApp {
                                 self.document.remove_entity(&id);
                             }
                             self.ui_state.clear_selection();
+                        }
+                        // 复制 Ctrl+C
+                        if i.modifiers.command && i.key_pressed(egui::Key::C) {
+                            self.copy_selected();
+                        }
+                        // 粘贴 Ctrl+V
+                        if i.modifiers.command && i.key_pressed(egui::Key::V) {
+                            self.paste_entities();
+                        }
+                        // 移动命令 M
+                        if i.key_pressed(egui::Key::M) && !self.ui_state.selected_entities.is_empty() {
+                            let world_pos = self.ui_state.mouse_world_pos;
+                            self.ui_state.edit_state = EditState::MovingEntities {
+                                start_pos: world_pos,
+                                entity_ids: self.ui_state.selected_entities.clone(),
+                            };
+                            self.ui_state.status_message = "移动: 指定目标点或拖动鼠标:".to_string();
                         }
                         
                         // 绘图工具
