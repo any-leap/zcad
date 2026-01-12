@@ -8,6 +8,7 @@ mod fonts;
 mod history_ops;
 mod input;
 mod rendering;
+mod theme;
 mod ui;
 mod ui_state;
 

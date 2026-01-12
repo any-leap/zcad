@@ -16,6 +16,7 @@ use crate::history_ops::HistoryOperations;
 use crate::input::{handle_left_click, handle_right_click, update_snap, get_effective_draw_point};
 use crate::input::handle_keyboard_shortcuts;
 use crate::rendering::{self, RenderContext};
+use crate::theme::THEME;
 use crate::ui::{self, LayerInfo, SelectedEntityInfo, extract_geometry_properties};
 use crate::ui_state::UiStateManager;
 
@@ -322,8 +323,8 @@ impl eframe::App for ZcadApp {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         
-        // 深色主题
-        ctx.set_visuals(egui::Visuals::dark());
+        // 应用现代化主题
+        THEME.apply(ctx);
 
         // UI状态快照
         let current_tool = self.ui_state.current_tool;
@@ -387,7 +388,7 @@ impl eframe::App for ZcadApp {
 
         // ===== 中央绘图区域 =====
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(30, 30, 46)))
+            .frame(THEME.canvas_frame())
             .show(ctx, |ui| {
                 let available_rect = ui.available_rect_before_wrap();
                 self.camera.viewport_size = (available_rect.width(), available_rect.height());
