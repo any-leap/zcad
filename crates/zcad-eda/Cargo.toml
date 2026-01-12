@@ -12,6 +12,7 @@ description = "ZCAD EDA (Electronic Design Automation) module - schematic and PC
 # Internal dependencies
 zcad-core = { path = "../zcad-core" }
 zcad-module = { path = "../zcad-module" }
+zcad-error = { workspace = true }
 
 # Math
 nalgebra = { workspace = true }
