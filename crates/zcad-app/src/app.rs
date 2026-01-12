@@ -4,11 +4,11 @@ use eframe::egui;
 use tracing::info;
 
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Circle, Geometry, Line, Polyline};
+use zcad_core::geometry::{Circle, Geometry, Line, Polyline, Text};
 use zcad_core::math::Point2;
 use zcad_core::properties::Color;
 use zcad_file::Document;
-use zcad_ui::state::{EditState, UiState};
+use zcad_ui::state::{Command, EditState, UiState};
 
 use crate::camera::Camera;
 use crate::file_ops::FileOperations;
@@ -236,6 +236,72 @@ impl ZcadApp {
             None
         }
     }
+
+    /// 处理命令
+    fn handle_command(&mut self, cmd: Command) {
+        match cmd {
+            Command::SetTool(tool) => {
+                self.ui_state.set_tool(tool);
+            }
+            Command::DeleteSelected => {
+                self.delete_selected();
+            }
+            Command::Undo => {
+                self.do_undo();
+            }
+            Command::Redo => {
+                self.do_redo();
+            }
+            Command::ZoomExtents => {
+                self.zoom_to_fit();
+            }
+            Command::New => {
+                self.document = Document::new();
+                self.ui_state.clear_selection();
+                self.ui_state.status_message = "新文档".to_string();
+            }
+            Command::Open => {
+                self.file_ops.show_open_dialog();
+            }
+            Command::Save => {
+                self.file_ops.quick_save(&mut self.document, &mut self.ui_state);
+            }
+            Command::CreateText { position, content, height } => {
+                let text = Text::new(position, content, height);
+                let entity = Entity::new(Geometry::Text(text));
+                self.history.add_entity_with_history(&mut self.document, entity, "创建文本");
+                self.ui_state.status_message = "文本已创建".to_string();
+            }
+            Command::Move => {
+                // TODO: 实现移动命令
+                self.ui_state.status_message = "移动命令".to_string();
+            }
+            Command::Copy => {
+                // TODO: 实现复制命令
+                self.ui_state.status_message = "复制命令".to_string();
+            }
+            Command::Rotate => {
+                // TODO: 实现旋转命令
+                self.ui_state.status_message = "旋转命令".to_string();
+            }
+            Command::Scale => {
+                // TODO: 实现缩放命令
+                self.ui_state.status_message = "缩放命令".to_string();
+            }
+            Command::Mirror => {
+                // TODO: 实现镜像命令
+                self.ui_state.status_message = "镜像命令".to_string();
+            }
+            Command::ExportDxf => {
+                // TODO: 实现导出 DXF
+                self.ui_state.status_message = "导出 DXF".to_string();
+            }
+            Command::DataInput(data) => {
+                // 数据输入在绘图状态下处理
+                self.ui_state.status_message = format!("数据输入: {}", data);
+            }
+        }
+    }
 }
 
 impl eframe::App for ZcadApp {
@@ -285,7 +351,7 @@ impl eframe::App for ZcadApp {
         let toolbar_result = ui::show_toolbar(ctx, current_tool, ortho, grid);
         self.handle_toolbar_result(toolbar_result);
 
-        // ===== 显示状态栏 =====
+        // ===== 显示状态栏和命令行 =====
         let statusbar_result = ui::show_statusbar(
             ctx,
             &status,
@@ -294,9 +360,17 @@ impl eframe::App for ZcadApp {
             effective_pos,
             entity_count,
             selected_count,
+            &mut self.ui_state.command_input,
+            &mut self.ui_state.should_focus_command_line,
         );
         if statusbar_result.toggle_snap {
             self.ui_state.snap_state.enabled = !self.ui_state.snap_state.enabled;
+        }
+        // 处理命令输入
+        if let Some(input) = statusbar_result.command_input {
+            if let Some(cmd) = self.ui_state.execute_command(&input) {
+                self.handle_command(cmd);
+            }
         }
 
         // ===== 显示图层面板 =====

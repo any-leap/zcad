@@ -12,6 +12,7 @@
 //! - 填充 (Hatch)
 //! - 引线 (Leader)
 //! - 标注 (Dimension)
+//! - 表格 (Table)
 
 mod point;
 mod line;
@@ -24,6 +25,7 @@ mod ellipse;
 mod spline;
 mod hatch;
 mod leader;
+mod table;
 
 pub use point::Point;
 pub use line::Line;
@@ -36,6 +38,7 @@ pub use ellipse::Ellipse;
 pub use spline::{Spline, SplineType};
 pub use hatch::{Hatch, HatchBoundary, HatchBoundaryElement, HatchPatternType, HatchPatternLine};
 pub use leader::{Leader, ArrowType};
+pub use table::{Table, TableCell, TableStyle, CellAlignment};
 
 use crate::math::{BoundingBox2, Point2};
 use serde::{Deserialize, Serialize};
@@ -54,6 +57,7 @@ pub enum Geometry {
     Spline(Spline),
     Hatch(Hatch),
     Leader(Leader),
+    Table(Table),
 }
 
 impl Geometry {
@@ -71,6 +75,7 @@ impl Geometry {
             Geometry::Spline(s) => s.bounding_box(),
             Geometry::Hatch(h) => h.bounding_box(),
             Geometry::Leader(l) => l.bounding_box(),
+            Geometry::Table(t) => t.bounding_box(),
         }
     }
 
@@ -88,6 +93,7 @@ impl Geometry {
             Geometry::Spline(_) => "Spline",
             Geometry::Hatch(_) => "Hatch",
             Geometry::Leader(_) => "Leader",
+            Geometry::Table(_) => "Table",
         }
     }
 
@@ -105,6 +111,7 @@ impl Geometry {
             Geometry::Spline(s) => s.distance_to_point(point) <= tolerance,
             Geometry::Hatch(h) => h.contains_point(point, tolerance),
             Geometry::Leader(l) => l.distance_to_point(point) <= tolerance,
+            Geometry::Table(t) => t.contains_point(point, tolerance),
         }
     }
 }

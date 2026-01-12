@@ -144,6 +144,11 @@ pub fn show_main_menu(ctx: &egui::Context, ui_state: &mut UiState) {
                     ui_state.set_tool(crate::state::DrawingTool::Point);
                     ui.close();
                 }
+                ui.separator();
+                if ui.button("Text            T").clicked() {
+                    ui_state.set_tool(crate::state::DrawingTool::Text);
+                    ui.close();
+                }
             });
 
             // 修改菜单

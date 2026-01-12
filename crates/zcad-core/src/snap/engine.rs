@@ -226,6 +226,9 @@ impl SnapEngine {
                     &mut self.candidates,
                 );
             }
+            Geometry::Table(_) => {
+                // 表格通常不参与捕捉（使用单独的网格捕捉）
+            }
         }
     }
 

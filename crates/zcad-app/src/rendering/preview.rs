@@ -1,6 +1,6 @@
 //! 预览绘制
 
-use zcad_core::geometry::{Arc, Circle, Dimension, DimensionType, Geometry, Line, Polyline};
+use zcad_core::geometry::{Arc, Circle, Dimension, DimensionType, Geometry, Line, Polyline, Text};
 use zcad_core::math::Point2;
 use zcad_core::properties::Color;
 use zcad_ui::state::{DrawingTool, EditState};
@@ -120,5 +120,17 @@ pub fn draw_preview(
             }
             _ => {}
         }
+    }
+    
+    // 文本输入预览
+    if let EditState::TextInput { position, content, height } = edit_state {
+        let preview_color = Color::from_hex(0xFF00FF);
+        let display_content = if content.is_empty() {
+            "输入文本...".to_string()
+        } else {
+            content.clone()
+        };
+        let text = Text::new(*position, display_content, *height);
+        draw_geometry(ctx, &Geometry::Text(text), preview_color);
     }
 }

@@ -68,15 +68,59 @@ pub fn draw_geometry(ctx: &RenderContext, geometry: &Geometry, color: Color) {
             }
         }
         Geometry::Text(text) => {
-            // 简化的文本绘制
+            // 文本绘制（支持高度缩放和对齐）
             let screen = ctx.world_to_screen(text.position);
-            painter.text(
-                screen,
-                egui::Align2::LEFT_BOTTOM,
-                &text.content,
-                egui::FontId::proportional(12.0),
-                stroke_color,
-            );
+            
+            // 计算屏幕上的字体大小（考虑缩放）
+            let font_size = (text.height * ctx.camera_zoom).max(8.0).min(200.0) as f32;
+            let font_id = egui::FontId::proportional(font_size);
+            
+            // 根据对齐方式设置锚点
+            use zcad_core::geometry::TextAlignment;
+            let align = match text.alignment {
+                TextAlignment::Left => egui::Align2::LEFT_BOTTOM,
+                TextAlignment::Center => egui::Align2::CENTER_BOTTOM,
+                TextAlignment::Right => egui::Align2::RIGHT_BOTTOM,
+            };
+            
+            // 如果有旋转，使用 TextShape
+            if text.rotation.abs() > 1e-6 {
+                let galley = painter.layout_no_wrap(
+                    text.content.clone(),
+                    font_id,
+                    stroke_color,
+                );
+                
+                let galley_size = galley.rect.size();
+                let half_size = galley_size * 0.5;
+                let angle = -text.rotation as f32; // egui Y轴向下，所以取反
+                
+                let rot = egui::emath::Rot2::from_angle(angle);
+                let offset = match text.alignment {
+                    TextAlignment::Left => egui::vec2(0.0, half_size.y),
+                    TextAlignment::Center => egui::vec2(half_size.x, half_size.y),
+                    TextAlignment::Right => egui::vec2(galley_size.x, half_size.y),
+                };
+                let draw_pos = screen - rot * offset;
+                
+                painter.add(egui::Shape::Text(egui::epaint::TextShape {
+                    pos: draw_pos,
+                    galley,
+                    underline: egui::Stroke::NONE,
+                    override_text_color: Some(stroke_color),
+                    angle,
+                    fallback_color: stroke_color,
+                    opacity_factor: 1.0,
+                }));
+            } else {
+                painter.text(
+                    screen,
+                    align,
+                    &text.content,
+                    font_id,
+                    stroke_color,
+                );
+            }
         }
         Geometry::Dimension(dim) => {
             draw_dimension(ctx, dim, color);
@@ -104,6 +148,65 @@ pub fn draw_geometry(ctx: &RenderContext, geometry: &Geometry, color: Color) {
                 let s1 = ctx.world_to_screen(p1);
                 let s2 = ctx.world_to_screen(p2);
                 painter.line_segment([s1, s2], stroke);
+            }
+        }
+        Geometry::Table(table) => {
+            // 表格绘制
+            let border_stroke = egui::Stroke::new(1.0, stroke_color);
+            let text_color = stroke_color;
+            
+            // 绘制所有单元格
+            for row in 0..table.rows {
+                for col in 0..table.columns {
+                    let cell_pos = table.cell_position(row, col);
+                    let (cell_width, cell_height) = table.cell_size(row, col);
+                    
+                    // 单元格四个角（世界坐标）
+                    let top_left = cell_pos;
+                    let top_right = Point2::new(cell_pos.x + cell_width, cell_pos.y);
+                    let bottom_left = Point2::new(cell_pos.x, cell_pos.y - cell_height);
+                    let bottom_right = Point2::new(cell_pos.x + cell_width, cell_pos.y - cell_height);
+                    
+                    // 转换为屏幕坐标
+                    let s_tl = ctx.world_to_screen(top_left);
+                    let s_tr = ctx.world_to_screen(top_right);
+                    let s_bl = ctx.world_to_screen(bottom_left);
+                    let s_br = ctx.world_to_screen(bottom_right);
+                    
+                    // 绘制单元格边框
+                    if table.style.show_grid {
+                        painter.line_segment([s_tl, s_tr], border_stroke);
+                        painter.line_segment([s_tr, s_br], border_stroke);
+                        painter.line_segment([s_br, s_bl], border_stroke);
+                        painter.line_segment([s_bl, s_tl], border_stroke);
+                    }
+                    
+                    // 绘制单元格内容
+                    if let Some(cell) = table.get_cell(row, col) {
+                        if !cell.content.is_empty() {
+                            // 计算文本位置（考虑边距）
+                            let margin = table.style.cell_margin;
+                            let text_pos = Point2::new(
+                                cell_pos.x + margin,
+                                cell_pos.y - margin - table.style.text_height,
+                            );
+                            let s_text = ctx.world_to_screen(text_pos);
+                            
+                            // 计算字体大小
+                            let font_size = (table.style.text_height * ctx.camera_zoom)
+                                .max(6.0)
+                                .min(100.0) as f32;
+                            
+                            painter.text(
+                                s_text,
+                                egui::Align2::LEFT_TOP,
+                                &cell.content,
+                                egui::FontId::proportional(font_size),
+                                text_color,
+                            );
+                        }
+                    }
+                }
             }
         }
         // 其他几何类型暂不渲染详细图形

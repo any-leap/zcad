@@ -96,6 +96,7 @@ pub fn get_grips_for_geometry(geometry: &Geometry) -> Vec<Grip> {
         Geometry::Dimension(_) => vec![], // 标注使用单独的编辑方式
         Geometry::Hatch(_) => vec![], // 填充使用边界编辑
         Geometry::Leader(leader) => get_leader_grips(leader),
+        Geometry::Table(_) => vec![], // 表格使用单独的编辑方式
     }
 }
 

@@ -1,7 +1,7 @@
 //! 鼠标输入处理
 
 use zcad_core::entity::Entity;
-use zcad_core::geometry::{Arc, Circle, Dimension, DimensionType, Geometry, Line, Point, Polyline};
+use zcad_core::geometry::{Arc, Circle, Dimension, DimensionType, Geometry, Line, Point, Polyline, Text};
 use zcad_core::math::Point2;
 use zcad_file::Document;
 use zcad_ui::state::{DrawingTool, EditState, UiState};
@@ -80,7 +80,14 @@ pub fn handle_left_click(
             }
             DrawingTool::None => {}
             DrawingTool::Text => {
-                ui_state.status_message = "文本功能暂未实现".to_string();
+                // 进入文本输入状态
+                ui_state.edit_state = EditState::TextInput {
+                    position: world_pos,
+                    content: String::new(),
+                    height: 2.5, // 默认文本高度
+                };
+                ui_state.status_message = "输入文本内容 (在命令行中输入，回车确认):".to_string();
+                ui_state.should_focus_command_line = true;
             }
             DrawingTool::Dimension => {
                 ui_state.edit_state = EditState::Drawing {

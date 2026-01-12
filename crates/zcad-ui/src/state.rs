@@ -496,6 +496,37 @@ impl UiState {
     pub fn execute_command(&mut self, command: &str) -> Option<Command> {
         let trimmed = command.trim();
 
+        // 检查是否在文本输入状态
+        if let EditState::TextInput { position, height, .. } = &self.edit_state {
+            let pos = *position;
+            let h = *height;
+            
+            if trimmed.is_empty() {
+                // 空输入，取消文本创建
+                self.edit_state = EditState::Idle;
+                self.status_message = "文本创建取消".to_string();
+                return None;
+            }
+            
+            // 创建文本并准备下一行
+            let cmd = Command::CreateText {
+                position: pos,
+                content: trimmed.to_string(),
+                height: h,
+            };
+            
+            // 移动到下一行位置
+            self.edit_state = EditState::TextInput {
+                position: Point2::new(pos.x, pos.y - h * 1.5),
+                content: String::new(),
+                height: h,
+            };
+            self.status_message = "输入下一行文本 (空行结束):".to_string();
+            self.should_focus_command_line = true;
+            
+            return Some(cmd);
+        }
+
         if trimmed.is_empty() {
             // 空命令（空格/回车），重复上一次命令
             if let Some(cmd) = &self.last_command {
@@ -596,5 +627,11 @@ pub enum Command {
     ExportDxf,
     /// 数据输入（在绘图状态下）
     DataInput(String),
+    /// 创建文本实体
+    CreateText {
+        position: Point2,
+        content: String,
+        height: f64,
+    },
 }
 
