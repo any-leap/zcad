@@ -65,14 +65,14 @@ impl ZcadApp {
             let x = i as f64 * 50.0;
             let line = Line::new(Point2::new(x, 0.0), Point2::new(x, 200.0));
             let mut entity = Entity::new(Geometry::Line(line));
-            entity.properties.color = Color::CYAN;
+            entity.visual_properties.color = Color::CYAN;
             self.document.add_entity(entity);
         }
 
         // 创建圆
         let circle = Circle::new(Point2::new(250.0, 100.0), 80.0);
         let mut entity = Entity::new(Geometry::Circle(circle));
-        entity.properties.color = Color::YELLOW;
+        entity.visual_properties.color = Color::YELLOW;
         self.document.add_entity(entity);
 
         // 创建矩形
@@ -86,7 +86,7 @@ impl ZcadApp {
             true,
         );
         let mut entity = Entity::new(Geometry::Polyline(rect));
-        entity.properties.color = Color::GREEN;
+        entity.visual_properties.color = Color::GREEN;
         self.document.add_entity(entity);
 
         info!("Created {} demo entities", self.document.entity_count());
@@ -177,7 +177,7 @@ impl ZcadApp {
                 // 撤销修改：恢复到之前的几何
                 if let Some(entity) = self.document.get_entity(entity_id) {
                     let mut restored = entity.clone();
-                    restored.geometry = previous_geometry.clone();
+                    restored.content = zcad_core::entity::EntityContent::Geometry(previous_geometry.clone());
                     self.document.update_entity(entity_id, restored);
                 }
             }
@@ -218,7 +218,7 @@ impl ZcadApp {
                 // 重做修改：应用新几何
                 if let Some(entity) = self.document.get_entity(entity_id) {
                     let mut modified = entity.clone();
-                    modified.geometry = new_geometry.clone();
+                    modified.content = zcad_core::entity::EntityContent::Geometry(new_geometry.clone());
                     self.document.update_entity(entity_id, modified);
                 }
             }
@@ -1048,7 +1048,7 @@ impl ZcadApp {
                     self.ui_state.clear_selection();
                     if let Some(entity) = hits.first() {
                         self.ui_state.add_to_selection(entity.id);
-                        self.ui_state.status_message = format!("已选择: {}", entity.geometry.type_name());
+                        self.ui_state.status_message = format!("已选择: {}", entity.geometry().map(|g| g.type_name()).unwrap_or("Unknown"));
                     } else {
                         self.ui_state.status_message.clear();
                     }
@@ -1068,9 +1068,12 @@ impl ZcadApp {
                 DrawingTool::DimensionRadius => {
                     // 查找点击位置的圆或圆弧
                     let hits = self.document.query_point(&world_pos, 10.0 / self.camera_zoom);
-                    if let Some(entity) = hits.iter().find(|e| matches!(e.geometry, Geometry::Circle(_) | Geometry::Arc(_))) {
+                    if let Some(entity) = hits.iter().find(|e| {
+                        e.geometry().map(|g| matches!(g, Geometry::Circle(_) | Geometry::Arc(_))).unwrap_or(false)
+                    }) {
                         // 找到圆或圆弧，开始标注
-                        let (center, radius) = match &entity.geometry {
+                        let Some(geometry) = entity.geometry() else { return; };
+                        let (center, radius) = match geometry {
                             Geometry::Circle(c) => (c.center, c.radius),
                             Geometry::Arc(a) => (a.center, a.radius),
                             _ => return,
@@ -1088,8 +1091,11 @@ impl ZcadApp {
                 DrawingTool::DimensionDiameter => {
                     // 查找点击位置的圆或圆弧
                     let hits = self.document.query_point(&world_pos, 10.0 / self.camera_zoom);
-                    if let Some(entity) = hits.iter().find(|e| matches!(e.geometry, Geometry::Circle(_) | Geometry::Arc(_))) {
-                        let (center, radius) = match &entity.geometry {
+                    if let Some(entity) = hits.iter().find(|e| {
+                        e.geometry().map(|g| matches!(g, Geometry::Circle(_) | Geometry::Arc(_))).unwrap_or(false)
+                    }) {
+                        let Some(geometry) = entity.geometry() else { return; };
+                        let (center, radius) = match geometry {
                             Geometry::Circle(c) => (c.center, c.radius),
                             Geometry::Arc(a) => (a.center, a.radius),
                             _ => return,
@@ -1440,22 +1446,26 @@ impl eframe::App for ZcadApp {
         // 选中实体信息
         let selected_info: Option<(String, Vec<String>)> = if selected_count == 1 {
             self.document.get_entity(&self.ui_state.selected_entities[0]).map(|e| {
-                let name = e.geometry.type_name().to_string();
-                let props: Vec<String> = match &e.geometry {
-                    Geometry::Line(l) => vec![
-                        format!("起点: ({:.2}, {:.2})", l.start.x, l.start.y),
-                        format!("终点: ({:.2}, {:.2})", l.end.x, l.end.y),
-                        format!("长度: {:.3}", l.length()),
-                    ],
-                    Geometry::Circle(c) => vec![
-                        format!("圆心: ({:.2}, {:.2})", c.center.x, c.center.y),
-                        format!("半径: {:.3}", c.radius),
-                    ],
-                    Geometry::Polyline(p) => vec![
-                        format!("顶点数: {}", p.vertex_count()),
-                        format!("长度: {:.3}", p.length()),
-                    ],
-                    _ => vec![],
+                let name = e.geometry().map(|g| g.type_name()).unwrap_or("Unknown").to_string();
+                let props: Vec<String> = if let Some(geometry) = e.geometry() {
+                    match geometry {
+                        Geometry::Line(l) => vec![
+                            format!("起点: ({:.2}, {:.2})", l.start.x, l.start.y),
+                            format!("终点: ({:.2}, {:.2})", l.end.x, l.end.y),
+                            format!("长度: {:.3}", l.length()),
+                        ],
+                        Geometry::Circle(c) => vec![
+                            format!("圆心: ({:.2}, {:.2})", c.center.x, c.center.y),
+                            format!("半径: {:.3}", c.radius),
+                        ],
+                        Geometry::Polyline(p) => vec![
+                            format!("顶点数: {}", p.vertex_count()),
+                            format!("长度: {:.3}", p.length()),
+                        ],
+                        _ => vec![],
+                    }
+                } else {
+                    vec![]
                 };
                 (name, props)
             })
@@ -1821,13 +1831,15 @@ impl eframe::App for ZcadApp {
                 for entity in self.document.all_entities() {
                     let color = if self.ui_state.selected_entities.contains(&entity.id) {
                         Color::from_hex(0x00FF00)
-                    } else if entity.properties.color.is_by_layer() {
+                    } else if entity.visual_properties.color.is_by_layer() {
                         self.document.layers.get_layer_by_id(entity.layer_id)
                             .map(|l| l.color).unwrap_or(Color::WHITE)
                     } else {
-                        entity.properties.color
+                        entity.visual_properties.color
                     };
-                    self.draw_geometry(&painter, &rect, &entity.geometry, color);
+                    if let Some(geometry) = entity.geometry() {
+                        self.draw_geometry(&painter, &rect, geometry, color);
+                    }
                 }
 
                 // 绘制预览

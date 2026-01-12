@@ -319,7 +319,8 @@ impl SnapEngine {
         tolerance: f64,
         reference_point: Option<Point2>,
     ) {
-        match &entity.geometry {
+        let Some(geometry) = entity.geometry() else { return; };
+        match geometry {
             Geometry::Point(p) => {
                 if self.config.enabled_types.is_enabled(SnapType::Endpoint) {
                     let dist = (p.position - mouse).norm();
@@ -920,7 +921,8 @@ impl SnapEngine {
         // 双重循环检查所有实体对
         for i in 0..entities.len() {
             for j in (i + 1)..entities.len() {
-                let intersections = self.find_intersections(&entities[i].geometry, &entities[j].geometry);
+                let (Some(geom_i), Some(geom_j)) = (entities[i].geometry(), entities[j].geometry()) else { continue; };
+                let intersections = self.find_intersections(geom_i, geom_j);
                 
                 for point in intersections {
                     let dist = (point - mouse).norm();

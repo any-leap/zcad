@@ -24,7 +24,8 @@ pub fn show_properties_panel(
             } else if selected_count == 1 {
                 // 单个实体的详细属性
                 if let Some(entity) = document.get_entity(&ui_state.selected_entities[0]) {
-                    ui.label(format!("Type: {}", entity.geometry.type_name()));
+                    let type_name = entity.geometry().map(|g| g.type_name()).unwrap_or("Unknown");
+                    ui.label(format!("Type: {}", type_name));
                     ui.separator();
 
                     egui::Grid::new("entity_props")
@@ -33,7 +34,7 @@ pub fn show_properties_panel(
                         .show(ui, |ui| {
                             // 颜色
                             ui.label("Color:");
-                            let color = &entity.properties.color;
+                            let color = &entity.visual_properties.color;
                             let c32 = egui::Color32::from_rgb(color.r, color.g, color.b);
                             let (rect, _) = ui.allocate_exact_size(
                                 egui::vec2(60.0, 16.0),
@@ -52,7 +53,8 @@ pub fn show_properties_panel(
                             ui.end_row();
 
                             // 根据几何类型显示特定属性
-                            match &entity.geometry {
+                            if let Some(geometry) = entity.geometry() {
+                            match geometry {
                                 zcad_core::geometry::Geometry::Line(line) => {
                                     ui.label("Start:");
                                     ui.label(format!(
@@ -104,6 +106,7 @@ pub fn show_properties_panel(
                                 }
                                 _ => {}
                             }
+                            }
                         });
                 }
             } else {
@@ -114,9 +117,8 @@ pub fn show_properties_panel(
                 let mut type_counts = std::collections::HashMap::new();
                 for id in &ui_state.selected_entities {
                     if let Some(entity) = document.get_entity(id) {
-                        *type_counts
-                            .entry(entity.geometry.type_name())
-                            .or_insert(0) += 1;
+                        let type_name = entity.geometry().map(|g| g.type_name()).unwrap_or("Unknown");
+                        *type_counts.entry(type_name).or_insert(0) += 1;
                     }
                 }
 

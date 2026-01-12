@@ -762,7 +762,8 @@ fn write_entities_section(writer: &mut DxfWriter, document: &Document) {
 
 /// 写入单个实体
 fn write_entity(writer: &mut DxfWriter, entity: &Entity, is_paper_space: bool) {
-    match &entity.geometry {
+    let Some(geometry) = entity.geometry() else { return; };
+    match geometry {
         Geometry::Line(line) => {
             writer.write_pair(0, "LINE");
             writer.write_handle_only();
@@ -958,7 +959,8 @@ fn write_layout_object(
 
 /// 将ZCAD实体转换为DXF实体
 fn convert_to_dxf_entity(entity: &Entity) -> Option<dxf::entities::Entity> {
-    let specific = match &entity.geometry {
+    let geometry = entity.geometry()?;
+    let specific = match geometry {
         Geometry::Line(line) => {
             let mut dxf_line = dxf::entities::Line::default();
             dxf_line.p1 = dxf::Point::new(line.start.x, line.start.y, 0.0);
@@ -1138,9 +1140,9 @@ fn convert_to_dxf_entity(entity: &Entity) -> Option<dxf::entities::Entity> {
     let mut dxf_entity = dxf::entities::Entity::new(specific);
 
     // 设置颜色
-    if !entity.properties.color.is_by_layer() {
+    if !entity.visual_properties.color.is_by_layer() {
         dxf_entity.common.color =
-            dxf::Color::from_index(color_to_aci(&entity.properties.color));
+            dxf::Color::from_index(color_to_aci(&entity.visual_properties.color));
     }
 
     Some(dxf_entity)

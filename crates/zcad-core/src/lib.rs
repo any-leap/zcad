@@ -23,10 +23,13 @@
 
 pub mod async_core;
 pub mod block;
+pub mod bom;
 pub mod buffer;
 pub mod dimstyle;
 pub mod entity;
+pub mod entity_store;
 pub mod geometry;
+pub mod query;
 pub mod grip;
 pub mod layout;
 pub mod history;
@@ -36,6 +39,7 @@ pub mod math;
 pub mod parametric;
 pub mod performance;
 pub mod properties;
+pub mod rules;
 pub mod snap;
 pub mod solver;
 pub mod spatial;
@@ -48,7 +52,9 @@ pub mod prelude {
     pub use crate::async_core::{AsyncCore, Message, MessageBus};
     pub use crate::block::{Block, BlockId, BlockReference, BlockTable};
     pub use crate::buffer::{DoubleBufferedEntities, EntityBuffer};
-    pub use crate::entity::{Entity, EntityId};
+    pub use crate::entity::{Entity, EntityId, EntityContent, PropertyValue, PropertyMap, Relation};
+    pub use crate::entity_store::EntityStore;
+    pub use crate::query::{QueryEngine, QueryBuilder, Op};
     pub use crate::geometry::{Arc, Circle, Ellipse, Geometry, Hatch, Leader, Line, Point, Polyline, Spline, Text, TextAlignment};
     pub use crate::history::{HistoryTree, Operation, OperationId};
     pub use crate::layer::Layer;

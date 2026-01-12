@@ -68,7 +68,7 @@ impl Action for FilletAction {
                     Status::SetRadius => ActionResult::Continue,
                     Status::SelectFirst => {
                         if let Some(entity) = self.find_line_at_point(ctx, point) {
-                            if let Geometry::Line(line) = &entity.geometry {
+                            if let Some(Geometry::Line(line)) = entity.geometry() {
                                 self.first_entity = Some(entity.id);
                                 self.first_line = Some(line.clone());
                                 self.status = Status::SelectSecond;
@@ -78,7 +78,7 @@ impl Action for FilletAction {
                     }
                     Status::SelectSecond => {
                         if let Some(entity) = self.find_line_at_point(ctx, point) {
-                            if let Geometry::Line(line2) = &entity.geometry {
+                            if let Some(Geometry::Line(line2)) = entity.geometry() {
                                 if let Some(result) = self.create_fillet(&self.first_line.clone().unwrap(), line2, self.first_entity.unwrap(), entity.id) {
                                     self.first_entity = None;
                                     self.first_line = None;
@@ -136,7 +136,11 @@ impl FilletAction {
     fn find_line_at_point<'a>(&self, ctx: &'a ActionContext, point: Point2) -> Option<&'a zcad_core::entity::Entity> {
         let tolerance = 5.0;
         ctx.entities.iter().find(|e| {
-            matches!(&e.geometry, Geometry::Line(_)) && e.geometry.contains_point(&point, tolerance)
+            if let Some(geom) = e.geometry() {
+                matches!(geom, Geometry::Line(_)) && geom.contains_point(&point, tolerance)
+            } else {
+                false
+            }
         })
     }
 

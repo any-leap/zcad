@@ -69,8 +69,10 @@ impl Action for ExtendAction {
                     }
                     Status::SelectToExtend => {
                         if let Some(entity) = self.find_entity_at_point(ctx, point) {
-                            if let Some(extended) = self.extend_entity(ctx, &entity.geometry, point) {
-                                return ActionResult::ModifyEntities(vec![(entity.id, extended)]);
+                            if let Some(geometry) = entity.geometry() {
+                                if let Some(extended) = self.extend_entity(ctx, geometry, point) {
+                                    return ActionResult::ModifyEntities(vec![(entity.id, extended)]);
+                                }
                             }
                         }
                         ActionResult::Continue
@@ -117,7 +119,7 @@ impl Action for ExtendAction {
 impl ExtendAction {
     fn find_entity_at_point<'a>(&self, ctx: &'a ActionContext, point: Point2) -> Option<&'a zcad_core::entity::Entity> {
         let tolerance = 5.0;
-        ctx.entities.iter().find(|e| e.geometry.contains_point(&point, tolerance))
+        ctx.entities.iter().find(|e| e.geometry().map(|g| g.contains_point(&point, tolerance)).unwrap_or(false))
     }
 
     fn extend_entity(&self, ctx: &ActionContext, geometry: &Geometry, click_point: Point2) -> Option<Geometry> {
@@ -149,13 +151,15 @@ impl ExtendAction {
         
         for boundary_id in &self.boundary_entities {
             if let Some(boundary) = ctx.entities.iter().find(|e| e.id == *boundary_id) {
-                let intersections = self.find_intersections(&Geometry::Line(ray.clone()), &boundary.geometry);
-                
-                for p in intersections {
-                    let dist = (p - extend_point).norm();
-                    if dist > EPSILON && dist < best_dist {
-                        best_dist = dist;
-                        best_intersection = Some(p);
+                if let Some(boundary_geom) = boundary.geometry() {
+                    let intersections = self.find_intersections(&Geometry::Line(ray.clone()), boundary_geom);
+                    
+                    for p in intersections {
+                        let dist = (p - extend_point).norm();
+                        if dist > EPSILON && dist < best_dist {
+                            best_dist = dist;
+                            best_intersection = Some(p);
+                        }
                     }
                 }
             }

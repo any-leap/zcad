@@ -76,10 +76,12 @@ impl Action for OffsetAction {
                     Status::SelectObject => {
                         // 尝试选择对象
                         if let Some(entity) = self.find_entity_at_point(ctx, point) {
-                            if Self::can_offset(&entity.geometry) {
-                                self.selected_entity = Some(entity.id);
-                                self.selected_geometry = Some(entity.geometry.clone());
-                                self.status = Status::SelectSide;
+                            if let Some(geometry) = entity.geometry() {
+                                if Self::can_offset(geometry) {
+                                    self.selected_entity = Some(entity.id);
+                                    self.selected_geometry = Some(geometry.clone());
+                                    self.status = Status::SelectSide;
+                                }
                             }
                         }
                         ActionResult::Continue
@@ -181,7 +183,7 @@ impl OffsetAction {
     /// 在点处查找实体
     fn find_entity_at_point<'a>(&self, ctx: &'a ActionContext, point: Point2) -> Option<&'a zcad_core::entity::Entity> {
         let tolerance = 5.0; // 像素容差转换为世界坐标
-        ctx.entities.iter().find(|e| e.geometry.contains_point(&point, tolerance))
+        ctx.entities.iter().find(|e| e.geometry().map(|g| g.contains_point(&point, tolerance)).unwrap_or(false))
     }
 
     /// 执行偏移操作

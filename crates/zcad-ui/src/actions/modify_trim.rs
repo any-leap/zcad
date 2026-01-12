@@ -71,8 +71,10 @@ impl Action for TrimAction {
                     Status::SelectToTrim => {
                         // 选择要修剪的对象并执行修剪
                         if let Some(entity) = self.find_entity_at_point(ctx, point) {
-                            if let Some(trimmed) = self.trim_entity(ctx, &entity.geometry, point) {
-                                return ActionResult::ModifyEntities(vec![(entity.id, trimmed)]);
+                            if let Some(geometry) = entity.geometry() {
+                                if let Some(trimmed) = self.trim_entity(ctx, geometry, point) {
+                                    return ActionResult::ModifyEntities(vec![(entity.id, trimmed)]);
+                                }
                             }
                         }
                         ActionResult::Continue
@@ -121,7 +123,7 @@ impl TrimAction {
     /// 在点处查找实体
     fn find_entity_at_point<'a>(&self, ctx: &'a ActionContext, point: Point2) -> Option<&'a zcad_core::entity::Entity> {
         let tolerance = 5.0;
-        ctx.entities.iter().find(|e| e.geometry.contains_point(&point, tolerance))
+        ctx.entities.iter().find(|e| e.geometry().map(|g| g.contains_point(&point, tolerance)).unwrap_or(false))
     }
 
     /// 修剪实体
@@ -140,8 +142,10 @@ impl TrimAction {
         
         for boundary_id in &self.boundary_entities {
             if let Some(boundary) = ctx.entities.iter().find(|e| e.id == *boundary_id) {
-                let points = self.find_intersections(&Geometry::Line(line.clone()), &boundary.geometry);
-                intersections.extend(points);
+                if let Some(boundary_geom) = boundary.geometry() {
+                    let points = self.find_intersections(&Geometry::Line(line.clone()), boundary_geom);
+                    intersections.extend(points);
+                }
             }
         }
         

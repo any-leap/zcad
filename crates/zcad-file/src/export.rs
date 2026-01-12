@@ -177,11 +177,13 @@ impl SvgExporter {
 
         // 渲染每个实体
         for entity in entities {
-            let color = &entity.properties.color;
-            let stroke_width = self.line_weight_to_mm(&entity.properties.line_weight).max(0.1);
+            let color = &entity.visual_properties.color;
+            let stroke_width = self.line_weight_to_mm(&entity.visual_properties.line_weight).max(0.1);
             
-            if let Some(svg_elem) = self.geometry_to_svg(&entity.geometry, color, stroke_width) {
-                svg.push_str(&format!("    {}\n", svg_elem));
+            if let Some(geometry) = entity.geometry() {
+                if let Some(svg_elem) = self.geometry_to_svg(geometry, color, stroke_width) {
+                    svg.push_str(&format!("    {}\n", svg_elem));
+                }
             }
         }
 
@@ -203,7 +205,7 @@ impl SvgExporter {
         let mut max_y = f64::MIN;
 
         for entity in entities {
-            let bbox = entity.geometry.bounding_box();
+            let bbox = entity.bounding_box();
             min_x = min_x.min(bbox.min.x);
             min_y = min_y.min(bbox.min.y);
             max_x = max_x.max(bbox.max.x);

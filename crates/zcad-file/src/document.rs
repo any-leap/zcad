@@ -206,7 +206,7 @@ impl Document {
 
         self.query_rect(&rect)
             .into_iter()
-            .filter(|e| e.geometry.contains_point(point, tolerance))
+            .filter(|e| e.geometry().map(|g| g.contains_point(point, tolerance)).unwrap_or(false))
             .collect()
     }
 
