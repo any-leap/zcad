@@ -1796,8 +1796,8 @@ impl eframe::App for ZcadApp {
                         self.ui_state.set_tool(DrawingTool::Select);
                     }
                     
-                    // 视图操作
-                    if i.key_pressed(egui::Key::Z) {
+                    // 视图操作（确保不与 Ctrl+Z 撤销冲突）
+                    if i.key_pressed(egui::Key::Z) && !i.modifiers.command && !i.modifiers.ctrl {
                         self.zoom_to_fit();
                     }
                     if i.key_pressed(egui::Key::G) {
