@@ -1,11 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/zcad-core",      # 核心几何引擎
-    "crates/zcad-renderer",  # GPU渲染器
-    "crates/zcad-file",      # 文件格式处理
-    "crates/zcad-ui",        # 用户界面
-    "crates/zcad-app",       # 主应用程序
+    "crates/zcad-core",        # 核心几何引擎 (2D)
+    "crates/zcad-module",      # 模块系统
+    "crates/zcad-geometry-3d", # 3D 几何内核
+    "crates/zcad-occt",        # OpenCASCADE 绑定
+    "crates/zcad-renderer",    # GPU渲染器
+    "crates/zcad-file",        # 文件格式处理
+    "crates/zcad-ui",          # 用户界面
+    "crates/zcad-mcad",        # MCAD 机械设计模块
+    "crates/zcad-bim",         # BIM 建筑工程模块
+    "crates/zcad-eda",         # EDA 电子设计模块
+    "crates/zcad-app",         # 主应用程序
 ]
 
 [workspace.package]
@@ -49,6 +55,12 @@ tracing-subscriber = "0.3"
 
 # DXF互操作
 dxf = "0.6"
+
+# Directories
+dirs = "6"
+
+# Approximate comparisons (for tests)
+approx = "0.5"
 
 [profile.release]
 lto = "thin"

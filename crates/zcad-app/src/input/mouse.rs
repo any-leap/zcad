@@ -89,6 +89,15 @@ pub fn handle_left_click(
                 ui_state.status_message = "输入文本内容 (在命令行中输入，回车确认):".to_string();
                 ui_state.should_focus_command_line = true;
             }
+            DrawingTool::Table => {
+                // 表格工具：进入绘制状态，等待指定对角点
+                ui_state.edit_state = EditState::Drawing {
+                    tool: DrawingTool::Table,
+                    points: vec![world_pos],
+                    expected_input: None,
+                };
+                ui_state.status_message = "表格: 指定对角点 (输入 3x4 设置行列数):".to_string();
+            }
             DrawingTool::Dimension => {
                 ui_state.edit_state = EditState::Drawing {
                     tool: DrawingTool::Dimension,
@@ -300,6 +309,49 @@ pub fn handle_left_click(
                         history.add_entity_with_history(document, entity, "创建直径标注");
                         ui_state.edit_state = EditState::Idle;
                         ui_state.status_message = "直径标注已创建".to_string();
+                    }
+                }
+                DrawingTool::Table => {
+                    // 两点确定表格大小
+                    if new_points.len() >= 2 {
+                        let p1 = new_points[0];
+                        let p2 = new_points[1];
+                        
+                        let width = (p2.x - p1.x).abs();
+                        let height = (p2.y - p1.y).abs();
+                        
+                        if width > 0.1 && height > 0.1 {
+                            // 确定左上角
+                            let top_left = Point2::new(
+                                p1.x.min(p2.x),
+                                p1.y.max(p2.y),
+                            );
+                            
+                            // 默认 3x3 表格
+                            let rows = 3;
+                            let cols = 3;
+                            
+                            let mut table = zcad_core::geometry::Table::new(top_left, rows, cols);
+                            
+                            // 设置列宽和行高
+                            let col_width = width / cols as f64;
+                            let row_height = height / rows as f64;
+                            
+                            for i in 0..cols {
+                                table.set_column_width(i, col_width);
+                            }
+                            for i in 0..rows {
+                                table.set_row_height(i, row_height);
+                            }
+                            
+                            // 调整文本高度
+                            table.style.text_height = (row_height * 0.5).min(2.5);
+                            
+                            let entity = Entity::new(Geometry::Table(table));
+                            history.add_entity_with_history(document, entity, "创建表格");
+                            ui_state.edit_state = EditState::Idle;
+                            ui_state.status_message = "表格已创建".to_string();
+                        }
                     }
                 }
                 _ => {}

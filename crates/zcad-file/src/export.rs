@@ -416,6 +416,11 @@ impl SvgExporter {
                 // 填充渲染需要更复杂的处理
                 None
             }
+            Geometry::Table(_) => {
+                // 表格 SVG 导出需要更复杂的处理
+                // TODO: 实现表格 SVG 导出
+                None
+            }
         }
     }
 

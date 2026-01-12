@@ -1,0 +1,32 @@
+[package]
+name = "zcad-module"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ZCAD module system - plugin architecture for domain-specific extensions"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Directories
+dirs = { workspace = true }
+
+# Internal dependencies
+zcad-core = { path = "../zcad-core" }
+
+[dev-dependencies]

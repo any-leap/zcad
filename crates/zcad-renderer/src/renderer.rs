@@ -300,6 +300,10 @@ impl Renderer {
             Geometry::Leader(leader) => {
                 self.draw_leader(leader, color_arr);
             }
+            Geometry::Table(_) => {
+                // 表格在 GPU 渲染器中暂不支持详细渲染
+                // 使用 egui 渲染表格
+            }
         }
     }
 
@@ -823,6 +827,9 @@ impl Renderer {
                     vertices.push(LineVertex::new(leader.vertices[i].x as f32, leader.vertices[i].y as f32, color_arr));
                     vertices.push(LineVertex::new(leader.vertices[i + 1].x as f32, leader.vertices[i + 1].y as f32, color_arr));
                 }
+            }
+            Geometry::Table(_) => {
+                // 表格在选择渲染中暂不绘制边框高亮
             }
         }
     }

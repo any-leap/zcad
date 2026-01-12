@@ -10,6 +10,7 @@ mod draw_rectangle;
 mod draw_point;
 mod draw_ellipse;
 mod draw_text;
+mod draw_table;
 mod select;
 mod modify_move;
 mod modify_copy;
@@ -31,6 +32,7 @@ pub use draw_rectangle::DrawRectangleAction;
 pub use draw_point::DrawPointAction;
 pub use draw_ellipse::DrawEllipseAction;
 pub use draw_text::DrawTextAction;
+pub use draw_table::DrawTableAction;
 pub use select::SelectAction;
 pub use modify_move::MoveAction;
 pub use modify_copy::CopyAction;
@@ -58,6 +60,7 @@ pub fn create_action(action_type: ActionType) -> Box<dyn Action> {
         ActionType::DrawPoint => Box::new(DrawPointAction::new()),
         ActionType::DrawEllipse => Box::new(DrawEllipseAction::new()),
         ActionType::DrawText => Box::new(DrawTextAction::new()),
+        ActionType::DrawTable => Box::new(DrawTableAction::new()),
         ActionType::Move => Box::new(MoveAction::new()),
         ActionType::Copy => Box::new(CopyAction::new()),
         ActionType::Rotate => Box::new(RotateAction::new()),

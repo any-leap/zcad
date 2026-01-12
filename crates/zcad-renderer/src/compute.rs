@@ -630,6 +630,10 @@ impl ComputeShader {
                 }
                 data
             },
+            Geometry::Table(_) => {
+                // 表格不支持 GPU 计算
+                vec![]
+            },
         }
     }
 

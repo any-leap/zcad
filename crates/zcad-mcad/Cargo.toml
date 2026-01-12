@@ -1,0 +1,31 @@
+[package]
+name = "zcad-mcad"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ZCAD MCAD (Mechanical CAD) module - parts, assemblies, and drawings"
+
+[dependencies]
+# Internal dependencies
+zcad-core = { path = "../zcad-core" }
+zcad-module = { path = "../zcad-module" }
+zcad-geometry-3d = { path = "../zcad-geometry-3d" }
+zcad-occt = { path = "../zcad-occt" }
+
+# Math
+nalgebra = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]

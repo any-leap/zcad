@@ -1,0 +1,27 @@
+[package]
+name = "zcad-geometry-3d"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ZCAD 3D geometry and topology kernel"
+
+[dependencies]
+# Math and geometry
+nalgebra = { workspace = true }
+parry3d = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Internal dependencies
+zcad-core = { path = "../zcad-core" }
+
+[dev-dependencies]
+approx = "0.5"

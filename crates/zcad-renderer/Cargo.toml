@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 zcad-core = { path = "../zcad-core" }
+zcad-geometry-3d = { path = "../zcad-geometry-3d" }
 
 wgpu.workspace = true
 winit.workspace = true

@@ -1,0 +1,29 @@
+[package]
+name = "zcad-eda"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "ZCAD EDA (Electronic Design Automation) module - schematic and PCB design"
+
+[dependencies]
+# Internal dependencies
+zcad-core = { path = "../zcad-core" }
+zcad-module = { path = "../zcad-module" }
+
+# Math
+nalgebra = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]

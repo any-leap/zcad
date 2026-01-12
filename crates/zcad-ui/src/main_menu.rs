@@ -149,6 +149,10 @@ pub fn show_main_menu(ctx: &egui::Context, ui_state: &mut UiState) {
                     ui_state.set_tool(crate::state::DrawingTool::Text);
                     ui.close();
                 }
+                if ui.button("Table           TB").clicked() {
+                    ui_state.set_tool(crate::state::DrawingTool::Table);
+                    ui.close();
+                }
             });
 
             // 修改菜单
