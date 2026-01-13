@@ -103,11 +103,11 @@ pub fn draw_dimension(ctx: &RenderContext, dim: &Dimension, color: Color) {
                 stroke,
             );
             
-            // 绘制从圆心到文本的线
-            painter.line_segment([center_s, text_s], stroke);
+            // 绘制从文本位置到圆弧上的引线
+            painter.line_segment([text_s, arrow_s], stroke);
             
-            // 绘制箭头（指向圆弧）
-            draw_arrow(painter, center_s, arrow_s, stroke);
+            // 绘制箭头（从文本指向圆弧）
+            draw_arrow(painter, text_s, arrow_s, stroke);
             
             // 绘制文本
             let text_content = dim.display_text().replace("%%C", "Ø");

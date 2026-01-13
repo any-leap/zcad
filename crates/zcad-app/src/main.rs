@@ -6,6 +6,7 @@ mod camera;
 mod file_ops;
 mod fonts;
 mod history_ops;
+mod icons;
 mod input;
 mod rendering;
 mod theme;

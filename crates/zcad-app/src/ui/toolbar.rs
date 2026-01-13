@@ -1,11 +1,12 @@
 //! 现代化工具栏
 //! 
-//! 采用图标按钮设计，清晰的分组
+//! 使用自定义矢量图标 + 文字标签
 
-use eframe::egui;
+use eframe::egui::{self, Color32, Rect, Stroke, Vec2, StrokeKind};
 use zcad_ui::state::DrawingTool;
 
-use crate::theme::{self, icons, THEME};
+use crate::icons;
+use crate::theme::THEME;
 
 /// 工具栏操作结果
 pub struct ToolbarResult {
@@ -32,6 +33,46 @@ impl Default for ToolbarResult {
     }
 }
 
+/// 图标类型
+#[derive(Clone, Copy)]
+enum IconType {
+    Select,
+    Line,
+    Circle,
+    Rectangle,
+    Arc,
+    Polyline,
+    Dimension,
+    Delete,
+    Undo,
+    Redo,
+    Ortho,
+    Grid,
+    ZoomFit,
+    Snap,
+}
+
+impl IconType {
+    fn draw(&self, painter: &egui::Painter, rect: Rect, color: Color32) {
+        match self {
+            IconType::Select => icons::draw_select_icon(painter, rect, color),
+            IconType::Line => icons::draw_line_icon(painter, rect, color),
+            IconType::Circle => icons::draw_circle_icon(painter, rect, color),
+            IconType::Rectangle => icons::draw_rectangle_icon(painter, rect, color),
+            IconType::Arc => icons::draw_arc_icon(painter, rect, color),
+            IconType::Polyline => icons::draw_polyline_icon(painter, rect, color),
+            IconType::Dimension => icons::draw_dimension_icon(painter, rect, color),
+            IconType::Delete => icons::draw_delete_icon(painter, rect, color),
+            IconType::Undo => icons::draw_undo_icon(painter, rect, color),
+            IconType::Redo => icons::draw_redo_icon(painter, rect, color),
+            IconType::Ortho => icons::draw_ortho_icon(painter, rect, color),
+            IconType::Grid => icons::draw_grid_icon(painter, rect, color),
+            IconType::ZoomFit => icons::draw_zoom_fit_icon(painter, rect, color),
+            IconType::Snap => icons::draw_snap_icon(painter, rect, color),
+        }
+    }
+}
+
 /// 显示工具栏
 pub fn show_toolbar(
     ctx: &egui::Context,
@@ -47,110 +88,64 @@ pub fn show_toolbar(
         .frame(theme.header_frame())
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.add_space(theme.spacing.small);
+                ui.add_space(theme.spacing.medium);
                 
                 // ===== 选择工具 =====
-                if theme::tool_button(ui, icons::SELECT, "选择", current_tool == DrawingTool::Select).clicked() {
+                if icon_text_button(ui, IconType::Select, "选择", current_tool == DrawingTool::Select, "选择工具 (Esc)") {
                     result.set_tool = Some(DrawingTool::Select);
                 }
                 
-                theme::vseparator(ui);
+                separator(ui);
                 
                 // ===== 绘图工具组 =====
-                ui.horizontal(|ui| {
-                    ui.add_space(theme.spacing.tiny);
-                    
-                    // 直线
-                    if theme::icon_button(ui, icons::LINE, "直线 (L)", current_tool == DrawingTool::Line).clicked() {
-                        result.set_tool = Some(DrawingTool::Line);
-                    }
-                    
-                    // 圆
-                    if theme::icon_button(ui, icons::CIRCLE, "圆 (C)", current_tool == DrawingTool::Circle).clicked() {
-                        result.set_tool = Some(DrawingTool::Circle);
-                    }
-                    
-                    // 矩形
-                    if theme::icon_button(ui, icons::RECTANGLE, "矩形 (R)", current_tool == DrawingTool::Rectangle).clicked() {
-                        result.set_tool = Some(DrawingTool::Rectangle);
-                    }
-                    
-                    // 圆弧
-                    if theme::icon_button(ui, icons::ARC, "圆弧 (A)", current_tool == DrawingTool::Arc).clicked() {
-                        result.set_tool = Some(DrawingTool::Arc);
-                    }
-                    
-                    // 多段线
-                    if theme::icon_button(ui, icons::POLYLINE, "多段线 (PL)", current_tool == DrawingTool::Polyline).clicked() {
-                        result.set_tool = Some(DrawingTool::Polyline);
-                    }
-                });
+                if icon_text_button(ui, IconType::Line, "直线", current_tool == DrawingTool::Line, "直线 (L)") {
+                    result.set_tool = Some(DrawingTool::Line);
+                }
+                if icon_text_button(ui, IconType::Circle, "圆", current_tool == DrawingTool::Circle, "圆 (C)") {
+                    result.set_tool = Some(DrawingTool::Circle);
+                }
+                if icon_text_button(ui, IconType::Rectangle, "矩形", current_tool == DrawingTool::Rectangle, "矩形 (R)") {
+                    result.set_tool = Some(DrawingTool::Rectangle);
+                }
+                if icon_text_button(ui, IconType::Arc, "弧", current_tool == DrawingTool::Arc, "圆弧 (A)") {
+                    result.set_tool = Some(DrawingTool::Arc);
+                }
+                if icon_text_button(ui, IconType::Polyline, "多段线", current_tool == DrawingTool::Polyline, "多段线 (PL)") {
+                    result.set_tool = Some(DrawingTool::Polyline);
+                }
                 
-                theme::vseparator(ui);
+                separator(ui);
                 
                 // ===== 标注工具组 =====
-                ui.horizontal(|ui| {
-                    ui.add_space(theme.spacing.tiny);
-                    
-                    // 线性标注
-                    if theme::icon_button(ui, icons::DIMENSION, "线性标注 (DIM)", current_tool == DrawingTool::Dimension).clicked() {
-                        result.set_tool = Some(DrawingTool::Dimension);
-                    }
-                    
-                    // 半径标注
-                    if theme::icon_button(ui, icons::RADIUS, "半径标注 (DIMR)", current_tool == DrawingTool::DimensionRadius).clicked() {
-                        result.set_tool = Some(DrawingTool::DimensionRadius);
-                    }
-                    
-                    // 直径标注
-                    if theme::icon_button(ui, icons::DIAMETER, "直径标注 (DIMD)", current_tool == DrawingTool::DimensionDiameter).clicked() {
-                        result.set_tool = Some(DrawingTool::DimensionDiameter);
-                    }
-                });
+                if icon_text_button(ui, IconType::Dimension, "标注", current_tool == DrawingTool::Dimension, "线性标注 (DIM)") {
+                    result.set_tool = Some(DrawingTool::Dimension);
+                }
                 
-                theme::vseparator(ui);
+                separator(ui);
                 
                 // ===== 编辑操作组 =====
-                ui.horizontal(|ui| {
-                    ui.add_space(theme.spacing.tiny);
-                    
-                    // 删除
-                    if theme::icon_button(ui, icons::DELETE, "删除选中 (Del)", false).clicked() {
-                        result.delete = true;
-                    }
-                    
-                    // 撤销
-                    if theme::icon_button(ui, icons::UNDO, "撤销 (Ctrl+Z)", false).clicked() {
-                        result.undo = true;
-                    }
-                    
-                    // 重做
-                    if theme::icon_button(ui, icons::REDO, "重做 (Ctrl+Y)", false).clicked() {
-                        result.redo = true;
-                    }
-                });
+                if icon_button(ui, IconType::Delete, false, "删除选中 (Del)") {
+                    result.delete = true;
+                }
+                if icon_button(ui, IconType::Undo, false, "撤销 (Ctrl+Z)") {
+                    result.undo = true;
+                }
+                if icon_button(ui, IconType::Redo, false, "重做 (Ctrl+Y)") {
+                    result.redo = true;
+                }
                 
-                theme::vseparator(ui);
+                separator(ui);
                 
                 // ===== 视图选项组 =====
-                ui.horizontal(|ui| {
-                    ui.add_space(theme.spacing.tiny);
-                    
-                    // 正交模式
-                    if theme::icon_button(ui, icons::ORTHO, "正交模式 (F8)", ortho_mode).clicked() {
-                        result.toggle_ortho = true;
-                    }
-                    
-                    // 网格
-                    if theme::icon_button(ui, icons::GRID, "网格 (G)", show_grid).clicked() {
-                        result.toggle_grid = true;
-                    }
-                    
-                    // 缩放至全部
-                    if theme::icon_button(ui, icons::ZOOM_FIT, "缩放至全部 (Z)", false).clicked() {
-                        result.zoom_fit = true;
-                    }
-                });
+                if icon_button(ui, IconType::Ortho, ortho_mode, "正交模式 (F8)") {
+                    result.toggle_ortho = true;
+                }
+                if icon_button(ui, IconType::Grid, show_grid, "网格 (G)") {
+                    result.toggle_grid = true;
+                }
+                if icon_button(ui, IconType::ZoomFit, false, "缩放至全部 (Z)") {
+                    result.zoom_fit = true;
+                }
                 
                 // 右侧状态显示
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -173,4 +168,145 @@ pub fn show_toolbar(
         });
     
     result
+}
+
+/// 图标+文字按钮
+fn icon_text_button(ui: &mut egui::Ui, icon: IconType, label: &str, selected: bool, tooltip: &str) -> bool {
+    let theme = &*THEME;
+    let c = &theme.colors;
+    
+    let icon_size = 16.0;
+    let font_size = 11.0;
+    let padding_x = 6.0;
+    let padding_y = 4.0;
+    let gap = 4.0;
+    
+    // 计算文字宽度
+    let text_galley = ui.painter().layout_no_wrap(
+        label.to_string(),
+        egui::FontId::proportional(font_size),
+        c.text_primary,
+    );
+    
+    let desired_size = Vec2::new(
+        padding_x * 2.0 + icon_size + gap + text_galley.rect.width(),
+        26.0,
+    );
+    
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    
+    if ui.is_rect_visible(rect) {
+        // 背景
+        let bg_color = if selected {
+            c.selected
+        } else if response.hovered() {
+            c.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        
+        let stroke = if selected {
+            Stroke::new(1.0, c.accent_primary)
+        } else {
+            Stroke::NONE
+        };
+        
+        ui.painter().rect(rect, theme.rounding.small, bg_color, stroke, StrokeKind::Outside);
+        
+        // 图标
+        let icon_color = if selected {
+            c.accent_secondary
+        } else if response.hovered() {
+            c.text_primary
+        } else {
+            c.text_secondary
+        };
+        
+        let icon_rect = Rect::from_center_size(
+            egui::pos2(rect.left() + padding_x + icon_size / 2.0, rect.center().y),
+            Vec2::splat(icon_size),
+        );
+        icon.draw(ui.painter(), icon_rect, icon_color);
+        
+        // 文字
+        let text_color = if selected {
+            c.accent_secondary
+        } else if response.hovered() {
+            c.text_primary
+        } else {
+            c.text_secondary
+        };
+        
+        let text_pos = egui::pos2(
+            rect.left() + padding_x + icon_size + gap,
+            rect.center().y - text_galley.rect.height() / 2.0,
+        );
+        ui.painter().galley(text_pos, text_galley, text_color);
+    }
+    
+    response.on_hover_text(tooltip).clicked()
+}
+
+/// 纯图标按钮
+fn icon_button(ui: &mut egui::Ui, icon: IconType, selected: bool, tooltip: &str) -> bool {
+    let theme = &*THEME;
+    let c = &theme.colors;
+    
+    let size = 26.0;
+    let icon_size = 16.0;
+    
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+    
+    if ui.is_rect_visible(rect) {
+        // 背景
+        let bg_color = if selected {
+            c.selected
+        } else if response.hovered() {
+            c.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        
+        let stroke = if selected {
+            Stroke::new(1.0, c.accent_primary)
+        } else {
+            Stroke::NONE
+        };
+        
+        ui.painter().rect(rect, theme.rounding.small, bg_color, stroke, StrokeKind::Outside);
+        
+        // 图标
+        let icon_color = if selected {
+            c.accent_primary
+        } else if response.hovered() {
+            c.text_primary
+        } else {
+            c.text_secondary
+        };
+        
+        let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
+        icon.draw(ui.painter(), icon_rect, icon_color);
+    }
+    
+    response.on_hover_text(tooltip).clicked()
+}
+
+/// 分隔线
+fn separator(ui: &mut egui::Ui) {
+    let theme = &*THEME;
+    let c = &theme.colors;
+    
+    ui.add_space(theme.spacing.small);
+    
+    let height = 18.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, height), egui::Sense::hover());
+    
+    if ui.is_rect_visible(rect) {
+        ui.painter().line_segment(
+            [rect.center_top(), rect.center_bottom()],
+            Stroke::new(1.0, c.border_subtle),
+        );
+    }
+    
+    ui.add_space(theme.spacing.small);
 }

@@ -5,7 +5,7 @@
 use eframe::egui::{self, Color32, Margin, Stroke, Vec2, FontFamily, StrokeKind};
 use zcad_core::math::Point2;
 
-use crate::theme::{icons, THEME};
+use crate::theme::THEME;
 
 /// 状态栏操作结果
 pub struct StatusbarResult {
@@ -92,7 +92,7 @@ pub fn show_statusbar(
                     ui.add_space(theme.spacing.medium);
                     
                     // 捕捉标记徽章
-                    let badge_text = format!("{} {}", icons::SNAP, snap_name);
+                    let badge_text = format!("⊕ {}", snap_name);
                     let text_layout = ui.painter().layout_no_wrap(
                         badge_text.clone(),
                         egui::FontId::proportional(11.0),
@@ -210,13 +210,10 @@ pub fn show_statusbar(
                     ui.add_space(theme.spacing.medium);
                     
                     // 捕捉开关按钮
+                    let snap_label = if snap_enabled { "⊕ 捕捉" } else { "⊕" };
                     let snap_button = ui.add(
                         egui::Button::new(
-                            egui::RichText::new(if snap_enabled { 
-                                format!("{} 捕捉", icons::SNAP) 
-                            } else { 
-                                icons::SNAP.to_string() 
-                            })
+                            egui::RichText::new(snap_label)
                             .color(if snap_enabled { c.accent_primary } else { c.text_muted })
                             .size(11.0)
                         )

@@ -282,38 +282,38 @@ impl Theme {
 /// 全局主题实例 (线程安全的延迟初始化)
 pub static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::default);
 
-/// 图标常量 - 使用更美观的 Unicode 符号
+/// 图标常量 - 使用兼容性更好的符号
 pub mod icons {
-    // 工具图标
-    pub const SELECT: &str = "◇";
-    pub const LINE: &str = "╲";
-    pub const CIRCLE: &str = "◯";
-    pub const RECTANGLE: &str = "▢";
-    pub const ARC: &str = "◠";
-    pub const POLYLINE: &str = "⌇";
+    // 工具图标 - 使用简单符号或文字
+    pub const SELECT: &str = "▸";
+    pub const LINE: &str = "/";
+    pub const CIRCLE: &str = "O";
+    pub const RECTANGLE: &str = "□";
+    pub const ARC: &str = "⌒";
+    pub const POLYLINE: &str = "~";
     
     // 标注
-    pub const DIMENSION: &str = "⟷";
-    pub const RADIUS: &str = "⊛";
-    pub const DIAMETER: &str = "⌀";
+    pub const DIMENSION: &str = "↔";
+    pub const RADIUS: &str = "R";
+    pub const DIAMETER: &str = "Ø";
     
     // 操作
-    pub const DELETE: &str = "✕";
-    pub const UNDO: &str = "⟲";
-    pub const REDO: &str = "⟳";
-    pub const ORTHO: &str = "⊾";
-    pub const GRID: &str = "▦";
-    pub const ZOOM_FIT: &str = "⛶";
-    pub const SNAP: &str = "⊕";
+    pub const DELETE: &str = "×";
+    pub const UNDO: &str = "←";
+    pub const REDO: &str = "→";
+    pub const ORTHO: &str = "⊥";
+    pub const GRID: &str = "#";
+    pub const ZOOM_FIT: &str = "□";
+    pub const SNAP: &str = "+";
     
     // 文件
-    pub const NEW: &str = "◇";
+    pub const NEW: &str = "+";
     pub const OPEN: &str = "📂";
     pub const SAVE: &str = "💾";
-    pub const EXIT: &str = "⏻";
+    pub const EXIT: &str = "×";
     
     // 状态
-    pub const CHECK: &str = "✓";
+    pub const CHECK: &str = "√";
     pub const UNCHECK: &str = "○";
 }
 
