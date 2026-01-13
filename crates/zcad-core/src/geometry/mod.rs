@@ -114,6 +114,190 @@ impl Geometry {
             Geometry::Table(t) => t.contains_point(point, tolerance),
         }
     }
+
+    /// 平移几何体
+    pub fn translate(&mut self, offset: crate::math::Vector2) {
+        match self {
+            Geometry::Point(p) => p.position += offset,
+            Geometry::Line(l) => {
+                l.start += offset;
+                l.end += offset;
+            }
+            Geometry::Circle(c) => c.center += offset,
+            Geometry::Arc(a) => a.center += offset,
+            Geometry::Polyline(pl) => {
+                for v in &mut pl.vertices {
+                    v.point += offset;
+                }
+            }
+            Geometry::Text(t) => t.position += offset,
+            Geometry::Dimension(d) => {
+                d.definition_point1 += offset;
+                d.definition_point2 += offset;
+                d.line_location += offset;
+            }
+            Geometry::Ellipse(e) => e.center += offset,
+            Geometry::Spline(s) => {
+                for p in &mut s.control_points {
+                    *p += offset;
+                }
+                for p in &mut s.fit_points {
+                    *p += offset;
+                }
+            }
+            Geometry::Hatch(h) => {
+                for boundary in &mut h.boundaries {
+                    for elem in &mut boundary.elements {
+                        match elem {
+                            HatchBoundaryElement::Line(line) => {
+                                line.start += offset;
+                                line.end += offset;
+                            }
+                            HatchBoundaryElement::Arc(arc) => {
+                                arc.center += offset;
+                            }
+                            HatchBoundaryElement::Ellipse(ellipse) => {
+                                ellipse.center += offset;
+                            }
+                            HatchBoundaryElement::Spline(spline) => {
+                                for p in &mut spline.control_points {
+                                    *p += offset;
+                                }
+                                for p in &mut spline.fit_points {
+                                    *p += offset;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(l) => {
+                for p in &mut l.vertices {
+                    *p += offset;
+                }
+            }
+            Geometry::Table(t) => t.position += offset,
+        }
+    }
+
+    /// 缩放几何体（相对于原点）
+    pub fn scale(&mut self, factor: f64) {
+        match self {
+            Geometry::Point(p) => {
+                p.position.x *= factor;
+                p.position.y *= factor;
+            }
+            Geometry::Line(l) => {
+                l.start.x *= factor;
+                l.start.y *= factor;
+                l.end.x *= factor;
+                l.end.y *= factor;
+            }
+            Geometry::Circle(c) => {
+                c.center.x *= factor;
+                c.center.y *= factor;
+                c.radius *= factor;
+            }
+            Geometry::Arc(a) => {
+                a.center.x *= factor;
+                a.center.y *= factor;
+                a.radius *= factor;
+            }
+            Geometry::Polyline(pl) => {
+                for v in &mut pl.vertices {
+                    v.point.x *= factor;
+                    v.point.y *= factor;
+                }
+            }
+            Geometry::Text(t) => {
+                t.position.x *= factor;
+                t.position.y *= factor;
+                t.height *= factor;
+            }
+            Geometry::Dimension(d) => {
+                d.definition_point1.x *= factor;
+                d.definition_point1.y *= factor;
+                d.definition_point2.x *= factor;
+                d.definition_point2.y *= factor;
+                d.line_location.x *= factor;
+                d.line_location.y *= factor;
+                d.text_height *= factor;
+            }
+            Geometry::Ellipse(e) => {
+                e.center.x *= factor;
+                e.center.y *= factor;
+                e.major_axis.x *= factor;
+                e.major_axis.y *= factor;
+                // ratio 不变，因为长短轴同比例缩放
+            }
+            Geometry::Spline(s) => {
+                for p in &mut s.control_points {
+                    p.x *= factor;
+                    p.y *= factor;
+                }
+                for p in &mut s.fit_points {
+                    p.x *= factor;
+                    p.y *= factor;
+                }
+            }
+            Geometry::Hatch(h) => {
+                for boundary in &mut h.boundaries {
+                    for elem in &mut boundary.elements {
+                        match elem {
+                            HatchBoundaryElement::Line(line) => {
+                                line.start.x *= factor;
+                                line.start.y *= factor;
+                                line.end.x *= factor;
+                                line.end.y *= factor;
+                            }
+                            HatchBoundaryElement::Arc(arc) => {
+                                arc.center.x *= factor;
+                                arc.center.y *= factor;
+                                arc.radius *= factor;
+                            }
+                            HatchBoundaryElement::Ellipse(ellipse) => {
+                                ellipse.center.x *= factor;
+                                ellipse.center.y *= factor;
+                                ellipse.major_axis.x *= factor;
+                                ellipse.major_axis.y *= factor;
+                            }
+                            HatchBoundaryElement::Spline(spline) => {
+                                for p in &mut spline.control_points {
+                                    p.x *= factor;
+                                    p.y *= factor;
+                                }
+                                for p in &mut spline.fit_points {
+                                    p.x *= factor;
+                                    p.y *= factor;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Geometry::Leader(l) => {
+                for p in &mut l.vertices {
+                    p.x *= factor;
+                    p.y *= factor;
+                }
+                l.arrow_size *= factor;
+                l.text_height *= factor;
+            }
+            Geometry::Table(t) => {
+                t.position.x *= factor;
+                t.position.y *= factor;
+                t.style.row_height *= factor;
+                t.style.column_width *= factor;
+                t.style.text_height *= factor;
+                for w in &mut t.column_widths {
+                    *w *= factor;
+                }
+                for h in &mut t.row_heights {
+                    *h *= factor;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

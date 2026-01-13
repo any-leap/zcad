@@ -24,6 +24,7 @@ impl Default for StatusbarResult {
 }
 
 /// 显示状态栏（包含命令行）
+#[allow(clippy::too_many_arguments)]
 pub fn show_statusbar(
     ctx: &egui::Context,
     status_message: &str,
@@ -31,6 +32,7 @@ pub fn show_statusbar(
     snap_info: Option<(&str, Point2)>,
     effective_pos: Point2,
     entity_count: usize,
+    visible_count: usize,
     selected_count: usize,
     command_input: &mut String,
     should_focus: &mut bool,
@@ -168,14 +170,14 @@ pub fn show_statusbar(
                     );
                     ui.add_space(theme.spacing.medium);
                     
-                    // 实体计数
+                    // 渲染/总实体计数
                     ui.label(
-                        egui::RichText::new(format!("{}", entity_count))
+                        egui::RichText::new(format!("{}/{}", visible_count, entity_count))
                             .color(c.text_primary)
                             .size(11.0)
                     );
                     ui.label(
-                        egui::RichText::new("实体:")
+                        egui::RichText::new("渲染:")
                             .color(c.text_muted)
                             .size(11.0)
                     );

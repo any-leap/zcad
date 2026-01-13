@@ -85,11 +85,31 @@ impl FileOperations {
             match op {
                 FileOperation::Open(path) => {
                     match Document::open(&path) {
-                        Ok(doc) => {
+                        Ok(mut doc) => {
+                            // 检查是否需要归一化坐标（建筑图等大坐标场景）
+                            if doc.needs_normalization() {
+                                info!("Large coordinates detected, normalizing...");
+                                let (normalized, offset, scale) = doc.normalize_coordinates(true);
+                                if normalized {
+                                    ui_state.set_status_message(format!(
+                                        "已打开并归一化坐标 (mm→m): {}",
+                                        path.display()
+                                    ));
+                                    info!(
+                                        "Coordinates normalized: offset=({:.2}, {:.2}), scale={}",
+                                        offset.x, offset.y, scale
+                                    );
+                                }
+                            }
+                            
                             *document = doc;
                             ui_state.clear_selection();
                             zoom_to_fit();
-                            ui_state.set_status_message(format!("已打开: {}", path.display()));
+                            
+                            // 如果没有归一化消息，显示普通打开消息
+                            if !document.needs_normalization() {
+                                ui_state.set_status_message(format!("已打开: {}", path.display()));
+                            }
                             info!("Opened file: {}", path.display());
                         }
                         Err(e) => {

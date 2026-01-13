@@ -1,4 +1,11 @@
 //! ZCAD 核心应用程序
+//!
+//! 采用 LibreCAD 风格的三层缓冲渲染架构：
+//! - Layer 1: 背景（网格）- 仅在缩放/平移时重绘
+//! - Layer 2: 实体 - 仅在实体变化时重绘
+//! - Layer 3: 叠加层（光标、捕捉、预览）- 每帧重绘
+//!
+//! 关键优化：鼠标移动时只需要重绘 Layer 3！
 
 use eframe::egui;
 use tracing::info;
@@ -15,6 +22,7 @@ use crate::file_ops::FileOperations;
 use crate::history_ops::HistoryOperations;
 use crate::input::{handle_left_click, handle_right_click, update_snap, get_effective_draw_point};
 use crate::input::handle_keyboard_shortcuts;
+use crate::vello_renderer::VelloRenderer;
 use crate::rendering::{self, RenderContext};
 use crate::theme::THEME;
 use crate::ui::{self, LayerInfo, SelectedEntityInfo, extract_geometry_properties};
@@ -27,6 +35,12 @@ pub struct ZcadApp {
     pub camera: Camera,
     pub file_ops: FileOperations,
     pub history: HistoryOperations,
+    /// 缓存渲染器 (tiny-skia)
+    cached_renderer: VelloRenderer,
+    /// 实体版本号（用于检测变化）
+    entity_version: u64,
+    /// 上一帧的实体数量
+    last_entity_count: usize,
 }
 
 impl Default for ZcadApp {
@@ -37,8 +51,12 @@ impl Default for ZcadApp {
             camera: Camera::default(),
             file_ops: FileOperations::new(),
             history: HistoryOperations::new(),
+            cached_renderer: VelloRenderer::new(),
+            entity_version: 0,
+            last_entity_count: 0,
         };
         app.create_demo_content();
+        app.last_entity_count = app.document.entity_count();
         app
     }
 }
@@ -307,11 +325,25 @@ impl ZcadApp {
 
 impl eframe::App for ZcadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 处理文件操作
-        let camera = self.camera.clone();
-        self.file_ops.process(&mut self.document, &mut self.ui_state, || {
-            // 这个闭包会在文件打开后调用
-        });
+        // 处理文件操作 - 保存当前实体数以检测文件是否被加载
+        let entity_count_before = self.document.entity_count();
+        self.file_ops.process(&mut self.document, &mut self.ui_state, || {});
+        
+        // 如果文件被加载（实体数变化），自动缩放到全图
+        if self.document.entity_count() != entity_count_before {
+            self.zoom_to_fit();
+            self.last_entity_count = self.document.entity_count();
+            self.entity_version += 1;
+            self.cached_renderer.invalidate();
+        }
+        
+        // 检测实体数量变化（绘图命令添加/删除实体）
+        let current_entity_count = self.document.entity_count();
+        if current_entity_count != self.last_entity_count {
+            self.last_entity_count = current_entity_count;
+            self.entity_version += 1;
+            self.cached_renderer.invalidate();
+        }
         
         // 更新窗口标题
         let title = if let Some(path) = self.document.file_path() {
@@ -353,6 +385,8 @@ impl eframe::App for ZcadApp {
         self.handle_toolbar_result(toolbar_result);
 
         // ===== 显示状态栏和命令行 =====
+        // visible_count 在渲染后更新，这里先用缓存值
+        let visible_count = self.ui_state.visible_entity_count;
         let statusbar_result = ui::show_statusbar(
             ctx,
             &status,
@@ -360,6 +394,7 @@ impl eframe::App for ZcadApp {
             snap_info,
             effective_pos,
             entity_count,
+            visible_count,
             selected_count,
             &mut self.ui_state.command_input,
             &mut self.ui_state.should_focus_command_line,
@@ -374,17 +409,22 @@ impl eframe::App for ZcadApp {
             }
         }
 
-        // ===== 显示图层面板 =====
-        ui::show_layers_panel(ctx, &layers_info);
+        // ===== 显示图层面板（右侧）=====
+        if self.ui_state.show_right_panel {
+            ui::show_layers_panel(ctx, &layers_info);
+        }
 
-        // ===== 显示属性面板 =====
-        ui::show_properties_panel(
-            ctx,
-            selected_info.as_ref(),
-            selected_count,
-            current_tool,
-            mouse_world,
-        );
+        // ===== 显示属性面板（左侧）=====
+        if self.ui_state.show_left_panel {
+            ui::show_properties_panel(
+                ctx,
+                selected_info.as_ref(),
+                selected_count,
+                current_tool,
+                mouse_world,
+                &self.document.coordinate_transform,
+            );
+        }
 
         // ===== 中央绘图区域 =====
         egui::CentralPanel::default()
@@ -398,9 +438,20 @@ impl eframe::App for ZcadApp {
 
                 // 处理鼠标位置
                 if let Some(hover_pos) = response.hover_pos() {
-                    self.ui_state.mouse_world_pos = self.camera.screen_to_world(hover_pos, &rect);
-                    // 更新捕捉点
-                    update_snap(&mut self.ui_state, self.document.all_entities(), self.camera.zoom);
+                    let new_pos = self.camera.screen_to_world(hover_pos, &rect);
+                    if (new_pos.x - self.ui_state.mouse_world_pos.x).abs() > 0.001 
+                        || (new_pos.y - self.ui_state.mouse_world_pos.y).abs() > 0.001 {
+                        self.ui_state.mouse_world_pos = new_pos;
+                        // 更新捕捉点 - 只查询鼠标附近的实体
+                        let snap_tolerance = self.ui_state.snap_state.config().tolerance / self.camera.zoom;
+                        let snap_search_radius = snap_tolerance * 2.0;
+                        let snap_search_rect = zcad_core::math::BoundingBox2::new(
+                            zcad_core::math::Point2::new(new_pos.x - snap_search_radius, new_pos.y - snap_search_radius),
+                            zcad_core::math::Point2::new(new_pos.x + snap_search_radius, new_pos.y + snap_search_radius),
+                        );
+                        let nearby_entities = self.document.query_rect(&snap_search_rect);
+                        update_snap(&mut self.ui_state, nearby_entities.into_iter(), self.camera.zoom);
+                    }
                 }
 
                 // 处理滚轮缩放
@@ -424,22 +475,59 @@ impl eframe::App for ZcadApp {
                         &mut self.history,
                         self.camera.zoom,
                     );
+                    self.entity_version += 1;
                 }
 
-                // 处理右键（结束多段线或取消）
+                // 处理右键
                 if response.clicked_by(egui::PointerButton::Secondary) {
                     handle_right_click(
                         &mut self.ui_state,
                         &mut self.document,
                         &mut self.history,
                     );
+                    self.entity_version += 1;
                 }
 
                 // 处理键盘快捷键
                 let keyboard_result = handle_keyboard_shortcuts(ctx, &mut self.ui_state);
                 self.handle_keyboard_result(keyboard_result);
 
-                // ===== 绘制 =====
+                // ===== 位图缓存渲染 =====
+                // 只有相机/实体变化时才重新渲染位图
+                // 缩放时只是显示已渲染的位图（极快）
+                let width = rect.width() as u32;
+                let height = rect.height() as u32;
+                
+                if width > 0 && height > 0 {
+                    // 获取可见实体
+                    let visible_bounds = self.camera.visible_bounds();
+                    let visible_entities: Vec<_> = self.document.query_rect(&visible_bounds);
+                    self.ui_state.visible_entity_count = visible_entities.len();
+                    
+                    // 使用缓存渲染器渲染 CAD 内容
+                    self.cached_renderer.render(
+                        &visible_entities,
+                        &self.document.layers,
+                        self.camera.center,
+                        self.camera.zoom,
+                        width,
+                        height,
+                        self.entity_version,
+                        self.ui_state.show_grid,
+                    );
+                    
+                    // 显示缓存的位图
+                    if let Some(texture_id) = self.cached_renderer.get_texture(ctx) {
+                        painter.image(
+                            texture_id,
+                            rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                }
+
+                // ===== 叠加层：用 egui 直接渲染（动态元素）=====
                 let render_ctx = RenderContext::new(
                     &painter,
                     &rect,
@@ -447,21 +535,12 @@ impl eframe::App for ZcadApp {
                     self.camera.zoom,
                 );
 
-                // 绘制网格
-                rendering::draw_grid(&render_ctx, self.ui_state.show_grid);
-
-                // 绘制所有实体
-                for entity in self.document.all_entities() {
-                    let color = if self.ui_state.selected_entities.contains(&entity.id) {
-                        Color::from_hex(0x00FF00)
-                    } else if entity.visual_properties.color.is_by_layer() {
-                        self.document.layers.get_layer_by_id(entity.layer_id)
-                            .map(|l| l.color).unwrap_or(Color::WHITE)
-                    } else {
-                        entity.visual_properties.color
-                    };
-                    if let Some(geometry) = entity.geometry() {
-                        rendering::draw_geometry(&render_ctx, geometry, color);
+                // 绘制选中实体高亮
+                for entity_id in &self.ui_state.selected_entities {
+                    if let Some(entity) = self.document.get_entity(entity_id) {
+                        if let Some(geometry) = entity.geometry() {
+                            rendering::draw_geometry(&render_ctx, geometry, Color::from_hex(0x00FF00));
+                        }
                     }
                 }
 
@@ -485,14 +564,17 @@ impl eframe::App for ZcadApp {
                     }
                 }
 
-                // 绘制十字光标（使用捕捉点如果有的话）
+                // 绘制十字光标
                 if response.hovered() {
                     let cursor_pos = self.ui_state.effective_point();
                     rendering::draw_crosshair(&render_ctx, cursor_pos);
                 }
             });
 
-        // 请求持续重绘（实现动画效果）
-        ctx.request_repaint();
+        // 鼠标移动时需要重绘（光标跟随）
+        let pointer_delta = ctx.input(|i| i.pointer.delta());
+        if pointer_delta.length_sq() > 0.0 {
+            ctx.request_repaint();
+        }
     }
 }

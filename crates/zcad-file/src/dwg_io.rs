@@ -1,12 +1,16 @@
 //! DWG 文件导入
 //!
-//! 使用 LibreDWG 库读取 DWG 文件并转换为 ZCAD 文档。
+//! 支持两种方式：
+//! 1. LibreDWG 直接解析（支持较旧版本）
+//! 2. ODA File Converter 转换为 DXF（支持所有版本，需要用户安装）
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::document::Document;
 use crate::dxf_io::conversion::aci_to_color;
 use crate::error::FileError;
+use tracing::{info, warn};
 use zcad_core::entity::Entity;
 use zcad_core::geometry::{
     Arc, Circle, Ellipse, Geometry, Line, Point, Polyline, PolylineVertex, Spline, Text,
@@ -17,8 +21,47 @@ use zcad_core::properties::{Color, Properties};
 use zcad_libredwg::{DwgEntity, DwgEntityType, DwgFile, DwgPoint2, DwgPoint3};
 
 /// 从 DWG 文件导入
+/// 
+/// 首先尝试使用 LibreDWG 直接解析，如果失败则尝试使用 ODA File Converter 转换为 DXF
 pub fn import(path: &Path) -> Result<Document, FileError> {
-    // 打开 DWG 文件
+    // 首先尝试 LibreDWG
+    match import_with_libredwg(path) {
+        Ok(doc) => {
+            info!("Successfully opened DWG with LibreDWG: {}", path.display());
+            return Ok(doc);
+        }
+        Err(e) => {
+            warn!("LibreDWG failed to open {}: {}", path.display(), e);
+            
+            // 尝试使用 ODA File Converter
+            if let Some(converter_path) = find_oda_converter() {
+                info!("Trying ODA File Converter at: {}", converter_path.display());
+                match import_with_oda_converter(path, &converter_path) {
+                    Ok(doc) => {
+                        info!("Successfully opened DWG via ODA converter");
+                        return Ok(doc);
+                    }
+                    Err(oda_err) => {
+                        warn!("ODA converter also failed: {}", oda_err);
+                        // 返回原始 LibreDWG 错误，因为它更有意义
+                        return Err(FileError::Dwg(format!(
+                            "LibreDWG: {}. ODA converter: {}", e, oda_err
+                        )));
+                    }
+                }
+            } else {
+                // 没有找到 ODA converter，返回带建议的错误
+                return Err(FileError::Dwg(format!(
+                    "{}. 建议: 安装免费的 ODA File Converter (https://www.opendesign.com/guestfiles/oda_file_converter) 以支持所有 DWG 版本，或将 DWG 另存为 DXF 格式。",
+                    e
+                )));
+            }
+        }
+    }
+}
+
+/// 使用 LibreDWG 直接导入
+fn import_with_libredwg(path: &Path) -> Result<Document, FileError> {
     let dwg_file = DwgFile::open(path).map_err(|e| FileError::Dwg(e.to_string()))?;
 
     let mut document = Document::new();
@@ -26,7 +69,6 @@ pub fn import(path: &Path) -> Result<Document, FileError> {
     // 导入图层
     for layer_name in dwg_file.layers() {
         if layer_name != "0" {
-            // "0" 图层已经默认存在
             let layer = zcad_core::layer::Layer::new(layer_name);
             document.layers.add_layer(layer);
         }
@@ -39,17 +81,171 @@ pub fn import(path: &Path) -> Result<Document, FileError> {
         }
     }
 
-    // 设置文件路径
     document.set_file_path(path);
-
     Ok(document)
+}
+
+/// 查找 ODA File Converter
+fn find_oda_converter() -> Option<PathBuf> {
+    // Windows 常见安装路径
+    #[cfg(windows)]
+    {
+        // 先尝试在 ODA 目录下搜索任何版本
+        let oda_dir = PathBuf::from(r"C:\Program Files\ODA");
+        if oda_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&oda_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let converter = path.join("ODAFileConverter.exe");
+                        if converter.exists() {
+                            return Some(converter);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 备用固定路径
+        let common_paths = [
+            r"C:\Program Files\ODA\ODAFileConverter\ODAFileConverter.exe",
+            r"C:\Program Files (x86)\ODA\ODAFileConverter\ODAFileConverter.exe",
+            r"C:\Program Files\ODA\ODAFileConverter 26.10.0\ODAFileConverter.exe",
+            r"C:\Program Files\ODA\ODAFileConverter 25.12\ODAFileConverter.exe",
+            r"C:\Program Files\ODA\ODAFileConverter 24.12\ODAFileConverter.exe",
+        ];
+        
+        for path_str in &common_paths {
+            let path = PathBuf::from(path_str);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        
+        // 尝试在 PATH 中查找
+        if let Ok(output) = Command::new("where").arg("ODAFileConverter").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = path_str.lines().next() {
+                    let path = PathBuf::from(first_line.trim());
+                    if path.exists() {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    
+    // macOS/Linux
+    #[cfg(not(windows))]
+    {
+        let common_paths = [
+            "/usr/bin/ODAFileConverter",
+            "/usr/local/bin/ODAFileConverter",
+            "/opt/ODAFileConverter/ODAFileConverter",
+        ];
+        
+        for path_str in &common_paths {
+            let path = PathBuf::from(path_str);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        
+        // 尝试 which
+        if let Ok(output) = Command::new("which").arg("ODAFileConverter").output() {
+            if output.status.success() {
+                let path_str = String::from_utf8_lossy(&output.stdout);
+                let path = PathBuf::from(path_str.trim());
+                if path.exists() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+/// 使用 ODA File Converter 转换并导入
+fn import_with_oda_converter(dwg_path: &Path, converter_path: &Path) -> Result<Document, FileError> {
+    // 创建临时目录
+    let temp_dir = std::env::temp_dir().join("zcad_dwg_convert");
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| FileError::Dwg(format!("Failed to create temp dir: {}", e)))?;
+    
+    // 获取输入文件所在目录和文件名
+    let input_dir = dwg_path.parent()
+        .ok_or_else(|| FileError::Dwg("Invalid DWG path".to_string()))?;
+    let file_name = dwg_path.file_stem()
+        .ok_or_else(|| FileError::Dwg("Invalid DWG filename".to_string()))?;
+    
+    // ODA File Converter 命令行参数:
+    // ODAFileConverter <input_folder> <output_folder> <output_version> <output_type> <recurse> <audit> [filter]
+    // output_version: ACAD2018, ACAD2013, ACAD2010, ACAD2007, ACAD2004, ACAD2000, ACAD14, ACAD13, ACAD12
+    // output_type: DWG, DXF, DXB
+    
+    let dwg_filename = dwg_path.file_name()
+        .ok_or_else(|| FileError::Dwg("Invalid filename".to_string()))?
+        .to_string_lossy();
+    
+    info!("Converting {} to DXF using ODA File Converter...", dwg_filename);
+    
+    let output = Command::new(converter_path)
+        .arg(input_dir)
+        .arg(&temp_dir)
+        .arg("ACAD2018")  // 输出版本
+        .arg("DXF")       // 输出格式
+        .arg("0")         // 不递归
+        .arg("1")         // 审核修复
+        .arg(format!("{}.dwg", file_name.to_string_lossy()))  // 只转换这个文件
+        .output()
+        .map_err(|e| FileError::Dwg(format!("Failed to run ODA converter: {}", e)))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(FileError::Dwg(format!("ODA converter failed: {}", stderr)));
+    }
+    
+    // 查找转换后的 DXF 文件
+    let dxf_path = temp_dir.join(format!("{}.dxf", file_name.to_string_lossy()));
+    
+    if !dxf_path.exists() {
+        // 尝试其他可能的命名
+        let entries = std::fs::read_dir(&temp_dir)
+            .map_err(|e| FileError::Dwg(format!("Failed to read temp dir: {}", e)))?;
+        
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "dxf").unwrap_or(false) {
+                // 找到 DXF 文件，导入它
+                let result = crate::dxf_io::import(&path);
+                // 清理临时文件
+                let _ = std::fs::remove_file(&path);
+                return result;
+            }
+        }
+        
+        return Err(FileError::Dwg("ODA converter did not produce DXF output".to_string()));
+    }
+    
+    // 导入转换后的 DXF
+    let result = crate::dxf_io::import(&dxf_path);
+    
+    // 清理临时文件
+    let _ = std::fs::remove_file(&dxf_path);
+    
+    // 更新文件路径为原始 DWG 路径
+    result.map(|mut doc| {
+        doc.set_file_path(dwg_path);
+        doc
+    })
 }
 
 /// 将 DWG 实体转换为 ZCAD 实体
 fn convert_dwg_entity(dwg_entity: &DwgEntity) -> Option<Entity> {
     let geometry = convert_entity_type(&dwg_entity.entity_type)?;
 
-    // 转换颜色
     let color = if let Some(index) = dwg_entity.color.index {
         aci_to_color(index)
     } else {
@@ -57,7 +253,6 @@ fn convert_dwg_entity(dwg_entity: &DwgEntity) -> Option<Entity> {
     };
 
     let properties = Properties::with_color(color);
-
     Some(Entity::new(geometry).with_properties(properties))
 }
 
@@ -137,7 +332,6 @@ fn convert_entity_type(entity_type: &DwgEntityType) -> Option<Geometry> {
             height,
             width: _,
         } => {
-            // MText 内容可能包含格式代码，简化处理
             let content = text
                 .replace("\\P", "\n")
                 .replace("\\p", "\n")
@@ -173,35 +367,18 @@ fn convert_entity_type(entity_type: &DwgEntityType) -> Option<Geometry> {
             Some(Geometry::Spline(spline))
         }
 
-        DwgEntityType::Insert { .. } => {
-            // INSERT (块引用) 需要更复杂的处理
-            // 目前跳过，后续可以扩展支持
-            None
-        }
-
-        DwgEntityType::Dimension { .. } => {
-            // 标注需要更复杂的处理
-            // 目前跳过
-            None
-        }
-
-        DwgEntityType::Hatch { .. } => {
-            // 填充需要更复杂的处理
-            // 目前跳过
-            None
-        }
-
+        DwgEntityType::Insert { .. } => None,
+        DwgEntityType::Dimension { .. } => None,
+        DwgEntityType::Hatch { .. } => None,
         DwgEntityType::Unknown { .. } => None,
     }
 }
 
-/// DwgPoint3 转换为 Point2
 #[inline]
 fn point3_to_point2(p: &DwgPoint3) -> Point2 {
     Point2::new(p.x, p.y)
 }
 
-/// DwgPoint2 转换为 Point2
 #[inline]
 fn dwg_point2_to_point2(p: &DwgPoint2) -> Point2 {
     Point2::new(p.x, p.y)
@@ -217,5 +394,11 @@ mod tests {
         let pt = point3_to_point2(&dwg_pt);
         assert_eq!(pt.x, 10.0);
         assert_eq!(pt.y, 20.0);
+    }
+    
+    #[test]
+    fn test_find_oda_converter() {
+        // 这个测试只验证函数不会崩溃
+        let _ = find_oda_converter();
     }
 }

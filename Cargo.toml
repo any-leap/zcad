@@ -61,6 +61,9 @@ zcad-error = { path = "crates/zcad-error" }
 # DXF互操作
 dxf = "0.6"
 
+# 高性能 2D 软件渲染
+tiny-skia = "0.11"
+
 # Directories
 dirs = "6"
 

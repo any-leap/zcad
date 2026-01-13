@@ -5,6 +5,7 @@ mod app;
 mod camera;
 mod file_ops;
 mod fonts;
+mod gpu_renderer;
 mod history_ops;
 mod icons;
 mod input;
@@ -12,6 +13,7 @@ mod rendering;
 mod theme;
 mod ui;
 mod ui_state;
+mod vello_renderer;
 
 use anyhow::Result;
 use eframe::egui;

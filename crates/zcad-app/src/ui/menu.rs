@@ -1,9 +1,11 @@
 //! 现代化顶部菜单栏
 
 use eframe::egui;
+use zcad_module::workspace::WorkspaceType;
 use zcad_ui::state::DrawingTool;
 
 use crate::theme::THEME;
+use crate::ui::workspace_selector::workspace_display_name_zh;
 
 /// 菜单操作结果
 pub struct MenuResult {
@@ -19,6 +21,10 @@ pub struct MenuResult {
     pub toggle_grid: bool,
     pub toggle_ortho: bool,
     pub set_tool: Option<DrawingTool>,
+    /// 切换到指定工作空间
+    pub switch_workspace: Option<WorkspaceType>,
+    /// 显示工作空间选择器
+    pub show_workspace_selector: bool,
 }
 
 impl Default for MenuResult {
@@ -36,6 +42,8 @@ impl Default for MenuResult {
             toggle_grid: false,
             toggle_ortho: false,
             set_tool: None,
+            switch_workspace: None,
+            show_workspace_selector: false,
         }
     }
 }
@@ -181,69 +189,50 @@ pub fn show_menu(ctx: &egui::Context, show_grid: bool, ortho_mode: bool) -> Menu
     result
 }
 
-/// 菜单项
+/// 菜单项 - 紧凑设计
 fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: Option<&str>) -> bool {
     let theme = &*THEME;
     let c = &theme.colors;
     
-    let clicked = ui.horizontal(|ui| {
-        let response = ui.add(
-            egui::Button::new(
-                egui::RichText::new(label)
-                    .color(c.text_primary)
-                    .size(12.0)
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .min_size(egui::vec2(120.0, 24.0))
-        );
-        
-        if let Some(sc) = shortcut {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(sc)
-                        .color(c.text_muted)
-                        .size(11.0)
-                );
-            });
-        }
-        
-        response.clicked()
-    }).inner;
+    // 构建带快捷键的文本
+    let text = if let Some(sc) = shortcut {
+        format!("{}  \t{}", label, sc)
+    } else {
+        label.to_string()
+    };
     
-    clicked
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(&text)
+                .color(c.text_primary)
+                .size(12.0)
+        )
+        .fill(egui::Color32::TRANSPARENT)
+        .min_size(egui::vec2(100.0, 22.0))
+    ).clicked()
 }
 
-/// 带开关状态的菜单项
+/// 带开关状态的菜单项 - 紧凑设计
 fn menu_item_toggle(ui: &mut egui::Ui, label: &str, shortcut: Option<&str>, enabled: bool) -> bool {
     let theme = &*THEME;
     let c = &theme.colors;
     
-    let check = if enabled { "√ " } else { "   " };
-    let button_text = format!("{}{}", check, label);
+    let check = if enabled { "✓ " } else { "   " };
     
-    let clicked = ui.horizontal(|ui| {
-        let response = ui.add(
-            egui::Button::new(
-                egui::RichText::new(&button_text)
-                    .color(if enabled { c.accent_secondary } else { c.text_primary })
-                    .size(12.0)
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .min_size(egui::vec2(120.0, 24.0))
-        );
-        
-        if let Some(sc) = shortcut {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(sc)
-                        .color(c.text_muted)
-                        .size(11.0)
-                );
-            });
-        }
-        
-        response.clicked()
-    }).inner;
+    // 构建带快捷键的文本
+    let text = if let Some(sc) = shortcut {
+        format!("{}{}  \t{}", check, label, sc)
+    } else {
+        format!("{}{}", check, label)
+    };
     
-    clicked
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(&text)
+                .color(if enabled { c.accent_secondary } else { c.text_primary })
+                .size(12.0)
+        )
+        .fill(egui::Color32::TRANSPARENT)
+        .min_size(egui::vec2(100.0, 22.0))
+    ).clicked()
 }

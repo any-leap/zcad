@@ -5,12 +5,18 @@ use zcad_core::math::Point2;
 use zcad_core::snap::SnapPoint;
 use zcad_ui::state::{DrawingTool, EditState, UiState};
 
-/// 更新捕捉点
+/// 更新捕捉点（优化版：只处理传入的附近实体）
 pub fn update_snap<'a>(
     ui_state: &mut UiState,
     entities: impl Iterator<Item = &'a Entity>,
     camera_zoom: f64,
 ) {
+    // 如果捕捉未启用，直接返回
+    if !ui_state.snap_state.enabled {
+        ui_state.snap_state.current_snap = None;
+        return;
+    }
+    
     let entities: Vec<&Entity> = entities.collect();
 
     // 获取参考点（绘图状态下的起始点）

@@ -108,6 +108,18 @@ pub fn handle_keyboard_shortcuts(
         if i.key_pressed(egui::Key::P) {
             ui_state.set_tool(DrawingTool::Polyline);
         }
+        
+        // 面板切换 F1=左面板, F2=右面板
+        if i.key_pressed(egui::Key::F1) {
+            ui_state.show_left_panel = !ui_state.show_left_panel;
+            let status = if ui_state.show_left_panel { "属性面板已显示" } else { "属性面板已隐藏" };
+            ui_state.status_message = status.to_string();
+        }
+        if i.key_pressed(egui::Key::F2) {
+            ui_state.show_right_panel = !ui_state.show_right_panel;
+            let status = if ui_state.show_right_panel { "图层面板已显示" } else { "图层面板已隐藏" };
+            ui_state.status_message = status.to_string();
+        }
     });
     
     result

@@ -1,7 +1,7 @@
 //! 相机/视图坐标变换模块
 
 use eframe::egui;
-use zcad_core::math::Point2;
+use zcad_core::math::{BoundingBox2, Point2};
 
 /// 相机状态，用于视图变换
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl Camera {
             // 缩放时保持鼠标位置不变
             let world_before = self.screen_to_world(hover_pos, rect);
             self.zoom *= zoom_factor;
-            self.zoom = self.zoom.clamp(0.01, 100.0);
+            self.zoom = self.zoom.clamp(0.0001, 10000.0); // 大幅扩展缩放范围
             let world_after = self.screen_to_world(hover_pos, rect);
             self.center.x += world_before.x - world_after.x;
             self.center.y += world_before.y - world_after.y;
@@ -76,7 +76,18 @@ impl Camera {
             let zoom_x = (self.viewport_size.0 as f64 - 100.0) / width.max(1.0);
             let zoom_y = (self.viewport_size.1 as f64 - 100.0) / height.max(1.0);
             
-            self.zoom = zoom_x.min(zoom_y).clamp(0.01, 100.0);
+            self.zoom = zoom_x.min(zoom_y).clamp(0.0001, 10000.0);
         }
+    }
+
+    /// 获取当前视口的世界坐标边界（用于视锥剔除）
+    pub fn visible_bounds(&self) -> BoundingBox2 {
+        let half_width = self.viewport_size.0 as f64 / (2.0 * self.zoom);
+        let half_height = self.viewport_size.1 as f64 / (2.0 * self.zoom);
+        
+        BoundingBox2::new(
+            Point2::new(self.center.x - half_width, self.center.y - half_height),
+            Point2::new(self.center.x + half_width, self.center.y + half_height),
+        )
     }
 }

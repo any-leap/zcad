@@ -62,6 +62,51 @@ pub struct SavedView {
     pub zoom: f64,
 }
 
+/// 坐标变换信息（用于大坐标归一化后的显示）
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CoordinateTransform {
+    /// 偏移量（内部坐标 + offset = 显示坐标）
+    pub offset: zcad_core::math::Vector2,
+    /// 缩放因子（内部坐标 * scale = 显示坐标）
+    pub scale: f64,
+}
+
+impl CoordinateTransform {
+    /// 创建单位变换
+    pub fn identity() -> Self {
+        Self {
+            offset: zcad_core::math::Vector2::new(0.0, 0.0),
+            scale: 1.0,
+        }
+    }
+
+    /// 将内部坐标转换为显示坐标（给用户看的）
+    pub fn to_display(&self, internal: zcad_core::math::Point2) -> zcad_core::math::Point2 {
+        zcad_core::math::Point2::new(
+            internal.x / self.scale + self.offset.x,
+            internal.y / self.scale + self.offset.y,
+        )
+    }
+
+    /// 将显示坐标转换为内部坐标（用户输入的）
+    pub fn to_internal(&self, display: zcad_core::math::Point2) -> zcad_core::math::Point2 {
+        zcad_core::math::Point2::new(
+            (display.x - self.offset.x) * self.scale,
+            (display.y - self.offset.y) * self.scale,
+        )
+    }
+
+    /// 将内部距离转换为显示距离
+    pub fn distance_to_display(&self, internal_distance: f64) -> f64 {
+        internal_distance / self.scale
+    }
+
+    /// 是否有变换（非单位变换）
+    pub fn has_transform(&self) -> bool {
+        self.offset.x.abs() > 0.001 || self.offset.y.abs() > 0.001 || (self.scale - 1.0).abs() > 0.0001
+    }
+}
+
 /// CAD文档
 #[derive(Debug)]
 pub struct Document {
@@ -88,6 +133,9 @@ pub struct Document {
 
     /// 文件路径（如果已保存）
     file_path: Option<std::path::PathBuf>,
+
+    /// 坐标变换（归一化偏移量）
+    pub coordinate_transform: CoordinateTransform,
 }
 
 impl Document {
@@ -102,6 +150,7 @@ impl Document {
             layout_manager: LayoutManager::new(),
             modified: false,
             file_path: None,
+            coordinate_transform: CoordinateTransform::identity(),
         }
     }
 
@@ -270,6 +319,101 @@ impl Document {
         for (id, entity) in &self.entities {
             self.spatial_index.insert(*id, entity.bounding_box());
         }
+    }
+
+    /// 归一化坐标（用于建筑图等大坐标场景）
+    /// 
+    /// 检测坐标范围，如果坐标值很大：
+    /// 1. 将图纸中心平移到原点
+    /// 2. 可选：将毫米转换为米（除以1000）
+    /// 
+    /// 返回 (是否进行了归一化, 平移偏移量, 缩放因子)
+    pub fn normalize_coordinates(&mut self, convert_mm_to_m: bool) -> (bool, zcad_core::math::Vector2, f64) {
+        use zcad_core::math::Vector2;
+
+        let bounds = match self.bounds() {
+            Some(b) => b,
+            None => return (false, Vector2::new(0.0, 0.0), 1.0),
+        };
+
+        let center = bounds.center();
+        let max_coord = center.x.abs().max(center.y.abs());
+        
+        // 阈值：如果最大坐标超过 100,000（典型建筑图坐标），则归一化
+        let threshold = 100_000.0;
+        
+        if max_coord < threshold {
+            return (false, Vector2::new(0.0, 0.0), 1.0);
+        }
+
+        // 保存原始中心点（用于显示坐标转换）
+        let original_center = center;
+        
+        // 计算平移偏移量（将中心移到原点）
+        let offset = Vector2::new(-center.x, -center.y);
+        
+        // 计算缩放因子
+        let scale_factor = if convert_mm_to_m { 0.001 } else { 1.0 };
+
+        // 对所有实体应用变换
+        for entity in self.entities.values_mut() {
+            if let Some(geometry) = entity.geometry_mut() {
+                // 先平移
+                geometry.translate(offset);
+                // 再缩放
+                if convert_mm_to_m {
+                    geometry.scale(scale_factor);
+                }
+            }
+        }
+
+        // 保存坐标变换信息（用于显示原始坐标给用户）
+        // 内部坐标 * (1/scale) + original_center = 原始坐标
+        self.coordinate_transform = CoordinateTransform {
+            offset: Vector2::new(original_center.x, original_center.y),
+            scale: scale_factor,
+        };
+
+        // 更新单位（内部单位）
+        if convert_mm_to_m {
+            self.metadata.units = "m".to_string();
+        }
+
+        // 重建空间索引
+        self.rebuild_spatial_index();
+
+        tracing::info!(
+            "Coordinates normalized: offset=({:.2}, {:.2}), scale={}, display_offset=({:.2}, {:.2})",
+            offset.x, offset.y, scale_factor, 
+            self.coordinate_transform.offset.x, self.coordinate_transform.offset.y
+        );
+
+        (true, offset, scale_factor)
+    }
+
+    /// 检查是否需要归一化（坐标值是否很大）
+    pub fn needs_normalization(&self) -> bool {
+        if let Some(bounds) = self.bounds() {
+            let center = bounds.center();
+            let max_coord = center.x.abs().max(center.y.abs());
+            max_coord >= 100_000.0
+        } else {
+            false
+        }
+    }
+
+    /// 获取建议的归一化参数
+    pub fn get_normalization_info(&self) -> Option<(zcad_core::math::Point2, f64)> {
+        let bounds = self.bounds()?;
+        let center = bounds.center();
+        let width = bounds.max.x - bounds.min.x;
+        let height = bounds.max.y - bounds.min.y;
+        let max_size = width.max(height);
+        
+        // 如果尺寸很大（>10000），建议转换单位
+        let suggested_scale = if max_size > 10_000.0 { 0.001 } else { 1.0 };
+        
+        Some((center, suggested_scale))
     }
 }
 

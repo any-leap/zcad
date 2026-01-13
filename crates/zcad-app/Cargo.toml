@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [features]
-default = []
+default = ["dwg"]
 # DWG support via LibreDWG (requires LibreDWG and LLVM/Clang installed)
 dwg = ["zcad-file/dwg"]
 
@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 zcad-core = { path = "../zcad-core" }
+zcad-module = { path = "../zcad-module" }
 zcad-renderer = { path = "../zcad-renderer" }
 zcad-file = { path = "../zcad-file" }
 zcad-ui = { path = "../zcad-ui" }
@@ -31,4 +32,14 @@ anyhow.workspace = true
 
 pollster = "0.4"
 rfd = "0.15"  # 文件对话框
+bytemuck = { version = "1", features = ["derive"] }
+egui-wgpu.workspace = true
+
+# 高性能 2D 渲染
+tiny-skia.workspace = true
+# 文字渲染
+ab_glyph = "0.2"
+
+# Vello GPU 2D 矢量渲染
+vello = "0.6"
 

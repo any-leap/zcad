@@ -5,6 +5,7 @@
 use eframe::egui::{self, Margin, Color32, Stroke, Vec2, StrokeKind};
 use zcad_core::geometry::Geometry;
 use zcad_core::math::Point2;
+use zcad_file::document::CoordinateTransform;
 use zcad_ui::state::DrawingTool;
 
 use crate::theme::THEME;
@@ -30,6 +31,8 @@ pub fn show_layers_panel(ctx: &egui::Context, layers: &[LayerInfo]) {
     egui::SidePanel::right("layers")
         .default_width(180.0)
         .min_width(140.0)
+        .max_width(300.0)  // 限制最大宽度
+        .resizable(true)
         .frame(theme.panel_frame().inner_margin(Margin::ZERO))
         .show(ctx, |ui| {
             // 面板标题
@@ -110,15 +113,22 @@ pub fn show_properties_panel(
     selected_count: usize,
     current_tool: DrawingTool,
     mouse_world_pos: Point2,
+    coord_transform: &CoordinateTransform,
 ) {
+    // 将内部坐标转换为显示坐标
+    let display_pos = coord_transform.to_display(mouse_world_pos);
     let theme = &*THEME;
     let c = &theme.colors;
     
     egui::SidePanel::left("props")
         .default_width(200.0)
         .min_width(160.0)
+        .max_width(350.0)  // 限制最大宽度，防止覆盖画布
+        .resizable(true)
         .frame(theme.panel_frame().inner_margin(Margin::ZERO))
         .show(ctx, |ui| {
+            // 设置 UI 的最大宽度，让长文本自动换行
+            ui.set_max_width(340.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -227,7 +237,7 @@ pub fn show_properties_panel(
                     ui.horizontal(|ui| {
                         ui.add_space(theme.spacing.large);
                         ui.vertical(|ui| {
-                            // X 坐标
+                            // X 坐标（显示原始坐标，而不是内部坐标）
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new("X")
@@ -237,7 +247,7 @@ pub fn show_properties_panel(
                                 );
                                 ui.add_space(theme.spacing.small);
                                 ui.label(
-                                    egui::RichText::new(format!("{:>10.4}", mouse_world_pos.x))
+                                    egui::RichText::new(format!("{:>10.3}", display_pos.x))
                                         .color(c.text_primary)
                                         .size(12.0)
                                         .family(egui::FontFamily::Monospace)
@@ -246,7 +256,7 @@ pub fn show_properties_panel(
                             
                             ui.add_space(theme.spacing.tiny);
                             
-                            // Y 坐标
+                            // Y 坐标（显示原始坐标，而不是内部坐标）
                             ui.horizontal(|ui| {
                                 ui.label(
                                     egui::RichText::new("Y")
@@ -256,7 +266,7 @@ pub fn show_properties_panel(
                                 );
                                 ui.add_space(theme.spacing.small);
                                 ui.label(
-                                    egui::RichText::new(format!("{:>10.4}", mouse_world_pos.y))
+                                    egui::RichText::new(format!("{:>10.3}", display_pos.y))
                                         .color(c.text_primary)
                                         .size(12.0)
                                         .family(egui::FontFamily::Monospace)

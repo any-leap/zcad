@@ -314,6 +314,15 @@ pub struct UiState {
     
     /// 布局管理器
     pub layout_manager: LayoutManager,
+    
+    /// 当前视口中可见的实体数量（用于渲染统计）
+    pub visible_entity_count: usize,
+    
+    /// 显示左侧面板（属性）
+    pub show_left_panel: bool,
+    
+    /// 显示右侧面板（图层）
+    pub show_right_panel: bool,
 }
 
 impl UiState {
@@ -359,6 +368,9 @@ impl Default for UiState {
             last_command: None,
             should_focus_command_line: false,
             layout_manager: LayoutManager::new(),
+            visible_entity_count: 0,
+            show_left_panel: true,
+            show_right_panel: true,
         }
     }
 }
