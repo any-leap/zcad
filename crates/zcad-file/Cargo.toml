@@ -1,13 +1,19 @@
 [package]
 name = "zcad-file"
-description = "ZCAD文件格式处理 - 原生格式和DXF互操作"
+description = "ZCAD文件格式处理 - 原生格式和DXF/DWG互操作"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# DWG support via LibreDWG (requires LibreDWG and LLVM/Clang installed)
+dwg = ["dep:zcad-libredwg"]
+
 [dependencies]
 zcad-core = { path = "../zcad-core" }
+zcad-libredwg = { path = "../zcad-libredwg", optional = true }
 
 serde.workspace = true
 serde_json.workspace = true

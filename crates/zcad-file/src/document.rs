@@ -109,9 +109,15 @@ impl Document {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, crate::FileError> {
         let path = path.as_ref();
 
-        match path.extension().and_then(|e| e.to_str()) {
+        match path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()).as_deref() {
             Some("zcad") => crate::native::load(path),
             Some("dxf") => crate::dxf_io::import(path),
+            #[cfg(feature = "dwg")]
+            Some("dwg") => crate::dwg_io::import(path),
+            #[cfg(not(feature = "dwg"))]
+            Some("dwg") => Err(crate::FileError::InvalidFormat(
+                "DWG support not enabled. Rebuild with 'dwg' feature.".to_string(),
+            )),
             _ => Err(crate::FileError::InvalidFormat(
                 "Unknown file extension".to_string(),
             )),

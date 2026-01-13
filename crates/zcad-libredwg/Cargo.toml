@@ -1,0 +1,24 @@
+[package]
+name = "zcad-libredwg"
+description = "ZCAD LibreDWG bindings - DWG file format support via LibreDWG"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+bindgen = "0.70"
+pkg-config = "0.3"
+
+[target.'cfg(windows)'.build-dependencies]
+vcpkg = "0.2"
+
+[features]
+default = []
+# Use bundled libredwg source (future enhancement)
+bundled = []

@@ -19,6 +19,9 @@ pub enum FileError {
     #[error("DXF error: {0}")]
     Dxf(String),
 
+    #[error("DWG error: {0}")]
+    Dwg(String),
+
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
 

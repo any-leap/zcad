@@ -43,8 +43,10 @@ impl FileOperations {
     /// 打开文件对话框 - 打开文件
     pub fn show_open_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
+            .add_filter("All CAD Files", &["zcad", "dxf", "dwg"])
             .add_filter("ZCAD Files", &["zcad"])
             .add_filter("DXF Files", &["dxf"])
+            .add_filter("DWG Files", &["dwg"])
             .add_filter("All Files", &["*"])
             .set_title("打开文件")
             .pick_file()

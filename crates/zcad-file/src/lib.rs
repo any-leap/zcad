@@ -3,11 +3,14 @@
 //! 支持：
 //! - `.zcad` 原生格式（基于SQLite）
 //! - `.dxf` 导入/导出
+//! - `.dwg` 导入（通过 LibreDWG）
 //! - SVG/PDF 导出
 
 pub mod document;
 pub mod dxf_io;
 pub mod dxf_raw;
+#[cfg(feature = "dwg")]
+pub mod dwg_io;
 pub mod error;
 pub mod export;
 pub mod native;

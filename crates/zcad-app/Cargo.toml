@@ -6,6 +6,11 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# DWG support via LibreDWG (requires LibreDWG and LLVM/Clang installed)
+dwg = ["zcad-file/dwg"]
+
 [[bin]]
 name = "zcad"
 path = "src/main.rs"

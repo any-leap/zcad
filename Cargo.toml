@@ -7,6 +7,7 @@ members = [
     "crates/zcad-geometry-3d", # 3D 几何内核
     "crates/zcad-occt",        # OpenCASCADE 绑定
     "crates/zcad-renderer",    # GPU渲染器
+    "crates/zcad-libredwg",    # LibreDWG 绑定
     "crates/zcad-file",        # 文件格式处理
     "crates/zcad-ui",          # 用户界面
     "crates/zcad-mcad",        # MCAD 机械设计模块

@@ -7,7 +7,7 @@
 
 mod import;
 mod export;
-mod conversion;
+pub(crate) mod conversion;
 
 pub use import::import;
 pub use export::{export, export_full};
